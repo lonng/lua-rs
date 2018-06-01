@@ -6,7 +6,7 @@ pub mod config;
 pub mod dump;
 pub mod undump;
 
-use std::io::{Cursor, BufReader};
+use std::io::{Read, Cursor, BufReader};
 use std::fs::File;
 use std::io;
 use std::result;
@@ -48,18 +48,18 @@ impl State {
 
     pub fn load_file(&mut self, path: &str)->Result<()> {
         let f = File::open(path)?;
-        let mut reader = BufReader::new(f);
-        self.load(&mut reader)
+        let reader = BufReader::new(f);
+        self.load(reader)
     }
 
     pub fn load_string(&mut self, s: &str) -> Result<()> {
         let cursor = Cursor::new(s.as_bytes());
-        let mut reader = BufReader::new(cursor);
-        self.load(&mut reader)
+        let reader = BufReader::new(cursor);
+        self.load(reader)
     }
 
-    pub fn load<T>(&mut self, reader: &mut BufReader<T>) -> Result<()> {
-        let parser = parser::Parser::new();
+    pub fn load<T: Read>(&mut self, reader: BufReader<T>) -> Result<()> {
+        let parser = parser::Parser::new(reader);
         Ok(())
     }
 }

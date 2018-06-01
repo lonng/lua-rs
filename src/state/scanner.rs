@@ -1,4 +1,5 @@
 use state::State;
+use std::io::{Read, BufRead,BufReader};
 
 #[derive(Debug)]
 enum Token {
@@ -38,12 +39,21 @@ enum Token {
 }
 
 #[derive(Debug)]
-pub struct Scanner {
+pub struct Scanner<T> {
+    reader: BufReader<T>,
 }
 
-impl Scanner {
-    pub fn new() -> Scanner {
+impl<T: Read> Scanner<T> {
+    pub fn new(reader: BufReader<T>) -> Scanner<T> {
         Scanner {
+            reader
+        }
+    }
+
+    pub fn peek(&mut self) -> Option<u8> {
+        match self.reader.fill_buf() {
+            Ok(ref buf) if buf.len() > 0 => Some(buf[0]),
+            _ => None
         }
     }
 }
