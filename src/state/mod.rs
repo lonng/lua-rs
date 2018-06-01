@@ -6,22 +6,19 @@ pub mod config;
 pub mod dump;
 pub mod undump;
 
-use std::io::{Read, Cursor, BufReader};
+use std::io::{Read, Cursor, BufRead, BufReader};
 use std::fs::File;
 use std::io;
 use std::result;
 
-/// `SIGNATURE` is the mark for precompiled code ('<esc>Lua').
-const SIGNATURE: &'static str = r"\033Lua";
-
 /// A State is an opaque structure representing per thread Lua state.
 #[derive(Debug)]
-pub struct State {
-}
+pub struct State {}
 
 #[derive(Debug)]
 pub enum Error {
-    IOError(io::Error)
+    IOError(io::Error),
+    UnexpectEOF,
 }
 
 impl From<io::Error> for Error {
@@ -43,23 +40,40 @@ impl State {
     /// let state = State::new();
     /// ```
     pub fn new() -> State {
-        State{}
+        State {}
     }
 
-    pub fn load_file(&mut self, path: &str)->Result<()> {
+    pub fn load_file(&mut self, path: &str) -> Result<()> {
         let f = File::open(path)?;
-        let reader = BufReader::new(f);
+        let mut reader = BufReader::new(f);
         self.load(reader)
     }
 
     pub fn load_string(&mut self, s: &str) -> Result<()> {
         let cursor = Cursor::new(s.as_bytes());
-        let reader = BufReader::new(cursor);
+        let mut reader = BufReader::new(cursor);
         self.load(reader)
     }
 
-    pub fn load<T: Read>(&mut self, reader: BufReader<T>) -> Result<()> {
-        let parser = parser::Parser::new(reader);
+    /// Load lua chunk from reader
+    /// Signature `\033Lua` indicates precompiled lua bytecode
+    pub fn load<T: Read>(&mut self, mut reader: BufReader<T>) -> Result<()> {
+        let mut magic: u8 = 0;
+        {
+            let buf = reader.fill_buf()?;
+            if buf.len() > 0 {
+                magic = buf[0]
+            }
+        }
+        let chunk = if magic == 033 {
+            undump::undump(reader)?
+        } else {
+            let mut parser = parser::Parser::new(reader);
+            parser.protect_parse()?
+        };
+
+        // TODO: save chunk
+
         Ok(())
     }
 }

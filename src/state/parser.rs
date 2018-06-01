@@ -1,12 +1,9 @@
-use state::scanner::Scanner;
+use state::scanner::{Token, Scanner};
 use state::State;
 use std::io::{Read, BufReader};
 use state::Result;
-
-#[derive(Debug)]
-pub struct Chunk {
-    prev: Option<Box<Chunk>>
-}
+use state::Error;
+use state::vm::Chunk;
 
 #[derive(Debug)]
 pub struct Parser<T> {
@@ -21,8 +18,14 @@ impl<T: Read> Parser<T> {
     }
 
     pub fn protect_parse(&mut self) -> Result<Box<Chunk>> {
-        Ok(Box::new(Chunk{
-            prev: None
-        }))
+        loop {
+            let token = self.scanner.next();
+            match token {
+                Token::EOS => break,
+                _ => println!("{:?}", token)
+            }
+        }
+
+        Ok(Chunk::new())
     }
 }

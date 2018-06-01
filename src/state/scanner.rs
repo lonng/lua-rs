@@ -1,8 +1,8 @@
 use state::State;
 use std::io::{Read, BufRead,BufReader};
 
-#[derive(Debug)]
-enum Token {
+#[derive(Debug, Clone)]
+pub enum Token {
     And,
     Break,
     Do,
@@ -41,19 +41,34 @@ enum Token {
 #[derive(Debug)]
 pub struct Scanner<T> {
     reader: BufReader<T>,
+    last_line: i32,
+    line_number: i32,
+    ahead_token: Token,
 }
 
 impl<T: Read> Scanner<T> {
     pub fn new(reader: BufReader<T>) -> Scanner<T> {
         Scanner {
-            reader
+            reader,
+            last_line: 0,
+            line_number: 0,
+            ahead_token: Token::EOS,
         }
     }
 
-    pub fn peek(&mut self) -> Option<u8> {
-        match self.reader.fill_buf() {
-            Ok(ref buf) if buf.len() > 0 => Some(buf[0]),
-            _ => None
+    pub fn next(&mut self) -> Token {
+        self.line_number = self.last_line;
+        match self.ahead_token {
+            Token::EOS => self.scan(),
+            _ => {
+                let ahead = self.ahead_token.clone();
+                self.ahead_token = Token::EOS;
+                ahead
+            }
         }
+    }
+
+    fn scan(&mut self) -> Token {
+        Token::EOS
     }
 }
