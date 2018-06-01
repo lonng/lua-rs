@@ -109,5 +109,8 @@ impl<R: Read> Scanner<R> {
         if is_new_line(self.current) && self.current != old {
             self.advance();
         }
+
+        self.line_number = self.line_number + 1;
+        // TODO: check lines too many?
     }
 }
