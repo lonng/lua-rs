@@ -1,3 +1,8 @@
+extern crate lua;
+
+use lua::state::State;
+
 fn main() {
-    println!("Hello, world!");
+    let mut state = State::new();
+    state.load_string("hello world").unwrap();
 }
