@@ -18,7 +18,8 @@ pub struct State {}
 #[derive(Debug)]
 pub enum Error {
     IOError(io::Error),
-    UnexpectEOF,
+    LexicalError(String),
+    SyntaxError(String),
 }
 
 impl From<io::Error> for Error {

@@ -6,12 +6,12 @@ use state::Error;
 use state::vm::Chunk;
 
 #[derive(Debug)]
-pub struct Parser<T> {
-    scanner: Scanner<T>,
+pub struct Parser<R> {
+    scanner: Scanner<R>,
 }
 
-impl<T: Read> Parser<T> {
-    pub fn new(reader: BufReader<T>) -> Parser<T> {
+impl<R: Read> Parser<R> {
+    pub fn new(reader: BufReader<R>) -> Parser<R> {
         Parser {
             scanner: Scanner::new(reader)
         }
@@ -21,7 +21,7 @@ impl<T: Read> Parser<T> {
         loop {
             let token = self.scanner.next();
             match token {
-                Token::EOS => break,
+                Ok(Token::EOF) => break,
                 _ => println!("{:?}", token)
             }
         }
