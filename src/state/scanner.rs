@@ -1,8 +1,11 @@
-use state::State;
-use std::io::{Read, BufRead,BufReader};
+use state::{Error, Result, State};
+use std::io::{BufRead, BufReader, Read};
 
-#[derive(Debug)]
-enum Token {
+/// END_OF_STREAM indicates that scanner has reach the end of stream.
+const END_OF_STREAM: u8 = 0xFF;
+
+#[derive(Debug, Clone)]
+pub enum Token {
     And,
     Break,
     Do,
@@ -32,28 +35,79 @@ enum Token {
     LE,
     NE,
     DoubleColon,
-    EOS,
+    EOF,
     Number(f64),
     Name(String),
     String(String),
 }
 
-#[derive(Debug)]
-pub struct Scanner<T> {
-    reader: BufReader<T>,
+fn is_new_line(byte: char) -> bool {
+    byte == '\r' || byte == '\n'
 }
 
-impl<T: Read> Scanner<T> {
-    pub fn new(reader: BufReader<T>) -> Scanner<T> {
+#[derive(Debug)]
+pub struct Scanner<R> {
+    current: char,
+    reader: BufReader<R>,
+    last_line: i32,
+    line_number: i32,
+    ahead_token: Token,
+}
+
+impl<R: Read> Scanner<R> {
+    pub fn new(reader: BufReader<R>) -> Scanner<R> {
         Scanner {
-            reader
+            current: '\0',
+            reader,
+            last_line: 1,
+            line_number: 1,
+            ahead_token: Token::EOF,
         }
     }
 
-    pub fn peek(&mut self) -> Option<u8> {
-        match self.reader.fill_buf() {
-            Ok(ref buf) if buf.len() > 0 => Some(buf[0]),
-            _ => None
+    pub fn next(&mut self) -> Result<Token> {
+        self.line_number = self.last_line;
+        match self.ahead_token {
+            Token::EOF => self.scan(),
+            _ => {
+                let ahead = self.ahead_token.clone();
+                self.ahead_token = Token::EOF;
+                Ok(ahead)
+            }
+        }
+    }
+
+    fn scan(&mut self) -> Result<Token> {
+        match self.current {
+            '\0' => self.advance(),
+            '\r' | '\n' => self.incr_line_number(),
+            _ => {}
+        }
+        println!("{:?}", self.current);
+        println!("{:?}", END_OF_STREAM);
+        Ok(Token::EOF)
+    }
+
+    fn advance(&mut self) {
+        let byte: u8 = match self.reader.fill_buf() {
+            Ok(ref buf) if buf.len() > 0 => buf[0],
+            _ => END_OF_STREAM
+        };
+
+        if byte != END_OF_STREAM {
+            self.reader.consume(1)
+        }
+
+        self.current = byte as char;
+    }
+
+    fn incr_line_number(&mut self) {
+        let old = self.current;
+        debug_assert!(is_new_line(old));
+
+        self.advance();
+        if is_new_line(self.current) && self.current != old {
+            self.advance();
         }
     }
 }
