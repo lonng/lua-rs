@@ -7,12 +7,14 @@ use state::vm::Chunk;
 
 #[derive(Debug)]
 pub struct Parser<R> {
+    filename: String,
     scanner: Scanner<R>,
 }
 
 impl<R: Read> Parser<R> {
-    pub fn new(reader: BufReader<R>) -> Parser<R> {
+    pub fn new(reader: BufReader<R>, name: String) -> Parser<R> {
         Parser {
+            filename: name,
             scanner: Scanner::new(reader)
         }
     }

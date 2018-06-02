@@ -5,6 +5,7 @@ use bytes::{BufMut, BytesMut};
 /// END_OF_STREAM indicates that scanner has reach the end of stream.
 const END_OF_STREAM: u8 = 0xFF;
 const EOF: char = END_OF_STREAM as char;
+const INIT: char = 0x0 as char;
 
 #[derive(Debug, Clone)]
 pub enum Token {
@@ -44,8 +45,59 @@ pub enum Token {
     Char(char),
 }
 
-fn is_new_line(byte: char) -> bool {
-    byte == '\r' || byte == '\n'
+impl ToString for Token {
+    fn to_string(&self) -> String {
+        match *self {
+            Token::Number(ff) => format!("{}", ff),
+            Token::Name(ref s) => s.clone(),
+            Token::String(ref s) => s.clone(),
+            Token::Char(ref c) => c.to_string(),
+            _ => {
+                let s = match *self {
+                    Token::And => "and",
+                    Token::Break => "break",
+                    Token::Do => "do",
+                    Token::Else => "else",
+                    Token::Elseif => "elseif",
+                    Token::End => "end",
+                    Token::False => "false",
+                    Token::For => "for",
+                    Token::Function => "function",
+                    Token::Goto => "goto",
+                    Token::If => "if",
+                    Token::In => "in",
+                    Token::Local => "local",
+                    Token::Nil => "nil",
+                    Token::Not => "not",
+                    Token::Or => "or",
+                    Token::Repeat => "repeat",
+                    Token::Return => "return",
+                    Token::Then => "then",
+                    Token::True => "true",
+                    Token::Until => "until",
+                    Token::While => "while",
+                    Token::Concat => "..",
+                    Token::Dots => "...",
+                    Token::Eq => "==",
+                    Token::GE => ">=",
+                    Token::LE => "<=",
+                    Token::NE => "~=",
+                    Token::DoubleColon => "::",
+                    Token::EOF => "<eof>",
+                    _ => unreachable!()
+                };
+                s.to_string()
+            }
+        }
+    }
+}
+
+fn is_new_line(c: char) -> bool {
+    c == '\r' || c == '\n'
+}
+
+fn is_decimal(c: char) -> bool {
+    '0' <= c && c <= '9'
 }
 
 #[derive(Debug)]
@@ -61,7 +113,7 @@ pub struct Scanner<R> {
 impl<R: Read> Scanner<R> {
     pub fn new(reader: BufReader<R>) -> Scanner<R> {
         Scanner {
-            current: '\0',
+            current: INIT,
             reader,
             last_line: 1,
             line_number: 1,
@@ -87,9 +139,12 @@ impl<R: Read> Scanner<R> {
             println!("{:?}", self.current);
             match self.current {
                 EOF => return Ok(Token::EOF),
-                '\0' => self.advance(),
+                INIT => self.advance(),
+                ' ' => self.advance(),
+                '\t' => self.advance(),
+                '\u{013}' => self.advance(),/*vertical tab character*/
+                '\u{014}' => self.advance(),/*form feed*/
                 '\r' | '\n' => self.incr_line_number(),
-                ' ' | '\u{014}' /*form feed*/ | '\t' | '\u{013}'/*vertical tab character*/ => self.advance(),
                 '-' => {
                     self.advance();
                     if self.current != '-' {
@@ -100,16 +155,88 @@ impl<R: Read> Scanner<R> {
                     if self.current == '[' {
                         let sep = self.skip_separator();
                         if sep >= 0 {
-                            // TODO: read multiple line
+                            self.read_multi_line(true, sep);
                             break
                         }
                         self.buffer.clear();
                     }
+
+                    if is_new_line(self.current) && self.current != EOF {
+                        self.advance();
+                    }
                 }
-                _ => {}
+                '[' => {
+                    let sep = self.skip_separator();
+                    if sep >= 0 {
+                        return Ok(Token::String(self.read_multi_line(false, sep)?));
+                    }
+                    self.buffer.clear();
+                    if sep == -1 {
+                        return Ok(Token::Char('['));
+                    }
+                    return Err(Error::LexicalError("invalid long string delimiter".to_string()));
+                }
+                '=' => {
+                    self.advance();
+                    if self.current == '=' {
+                        return Ok(Token::Char('='));
+                    }
+                    self.advance();
+                    return Ok(Token::Eq);
+                }
+                '<' => {
+                    self.advance();
+                    if self.current == '=' {
+                        return Ok(Token::Char('<'));
+                    }
+                    self.advance();
+                    return Ok(Token::LE);
+                }
+                '>' => {
+                    self.advance();
+                    if self.current == '=' {
+                        return Ok(Token::Char('>'));
+                    }
+                    self.advance();
+                    return Ok(Token::GE);
+                }
+                '~' => {
+                    self.advance();
+                    if self.current == '=' {
+                        return Ok(Token::Char('~'));
+                    }
+                    self.advance();
+                    return Ok(Token::NE);
+                }
+                ':' => {
+                    self.advance();
+                    if self.current == ':' {
+                        return Ok(Token::Char(':'));
+                    }
+                    self.advance();
+                    return Ok(Token::DoubleColon);
+                }
+                '"' | '\'' => return self.read_string(),
+                '.' => unimplemented!(),
+                _ => {
+                    let c = self.current;
+                    if c.is_digit(10) {
+                        return self.read_number();
+                    }else if c == '_' || c.is_alphabetic() {
+                        loop {
+                            self.save_and_advance();
+                            if !self.current.is_alphanumeric(){
+                                break;
+                            }
+                        }
+                        return self.reserved_or_name();
+                    }
+                    self.advance();
+                    return Ok(Token::Char(c));
+                }
             }
         }
-        Ok(Token::EOF)
+        unreachable!()
     }
 
     fn advance(&mut self) {
@@ -135,9 +262,8 @@ impl<R: Read> Scanner<R> {
         self.advance();
     }
 
-    fn advance_and_save(&mut self) {
+    fn advance_and_save(&mut self, c: char) {
         self.advance();
-        let c = self.current;
         self.save(c);
     }
 
@@ -183,24 +309,137 @@ impl<R: Read> Scanner<R> {
                 EOF => {
                     if is_comment {
                         return Err(Error::LexicalError("unfinished long comment".to_string()));
-                    }else {
+                    } else {
                         return Err(Error::LexicalError("unfinished long string".to_string()));
                     }
-                },
-
+                }
                 ']' => {
                     let sep2 = self.skip_separator();
+                    let mut ret = String::new();
                     if sep == sep2 {
                         self.save_and_advance();
                         if !is_comment {
-                            // TODO
+                            let buf_len = self.buffer.len();
+                            ret = String::from_utf8(self.buffer[(2 + sep) as usize..(buf_len - 2)].to_vec())?;
                         }
+                        self.buffer.clear();
+                        return Ok(ret);
                     }
                 }
+                '\r' => self.current = '\n',
+                '\n' => {
+                    let current = self.current;
+                    self.save(current);
+                    self.incr_line_number();
+                }
 
-                _ => {}
+                _ => {
+                    if !is_comment {
+                        let current = self.current;
+                        self.save(current);
+                    }
+                    self.advance();
+                }
             }
         }
         Ok(String::new())
+    }
+
+    fn read_string(&mut self) -> Result<Token> {
+        let delimiter = self.current;
+        self.save_and_advance();
+        loop {
+            if self.current == delimiter {
+                break
+            }
+
+            match self.current {
+                EOF | '\n' | '\r' => return Err(Error::LexicalError("unfinished string".to_string())),
+                '\\' => {
+                    self.advance();
+                    let current = self.current;
+                    match current {
+                        /// Escape charactors
+                        /// \a   U+0007 alert or bell
+                        /// \b   U+0008 backspace
+                        /// \f   U+000C form feed
+                        /// \n   U+000A line feed or newline
+                        /// \r   U+000D carriage return
+                        /// \t   U+0009 horizontal tab
+                        /// \v   U+000b vertical tab
+                        /// \\   U+005c backslash
+                        /// \'   U+0027 single quote  (valid escape only within rune literals)
+                        /// \"   U+0022 double quote  (valid escape only within string literals)
+                        'a' => self.advance_and_save('\u{0007}'),
+                        'b' => self.advance_and_save('\u{0008}'),
+                        'f' => self.advance_and_save('\u{000C}'),
+                        'n' => self.advance_and_save('\u{000A}'),
+                        'r' => self.advance_and_save('\u{000D}'),
+                        't' => self.advance_and_save('\u{0009}'),
+                        'v' => self.advance_and_save('\u{000b}'),
+                        '\\' => self.advance_and_save('\u{005c}'),
+                        '\'' => self.advance_and_save('\u{0027}'),
+                        '"' => self.advance_and_save('\u{0022}'),
+                        _ if current == EOF => {} // do nothing
+                        _ if is_new_line(current) => {
+                            self.incr_line_number();
+                            self.save('\n');
+                        }
+                        _ if current == 'x' => {
+                            let hex_esc = self.read_hex_escape()?;
+                            self.save(hex_esc);
+                        }
+                        _ if current == 'z' => {
+                            self.advance();
+                            loop {
+                                let c = self.current;
+                                if is_new_line(c) {
+                                    self.incr_line_number();
+                                } else {
+                                    self.advance();
+                                }
+                                if !(c as char).is_whitespace() {
+                                    break;
+                                }
+                            }
+                        }
+                        _ => {
+                            if !is_decimal(current) {
+                                return Err(Error::LexicalError("invalid escape sequence".to_string()));
+                            }
+                            let dec_esc = self.read_decimal_escape()?;
+                            self.save(dec_esc);
+                        }
+                    }
+                }
+                _ => {
+                    self.save_and_advance();
+                }
+            }
+        }
+
+        self.save_and_advance();
+        let mut ret = String::new();
+        let buf_len = self.buffer.len();
+        if buf_len > 0 {
+            ret = String::from_utf8(self.buffer[..].to_vec())?;
+        }
+        self.buffer.clear();
+        return Ok(Token::String(ret));
+    }
+
+    fn read_hex_escape(&mut self) -> Result<char> {
+        unimplemented!()
+    }
+    fn read_decimal_escape(&mut self) -> Result<char> {
+        unimplemented!()
+    }
+
+    fn read_number(&mut self) -> Result<Token> {
+        unimplemented!()
+    }
+
+    fn reserved_or_name(&mut self) -> Result<Token> {
+        unimplemented!()
     }
 }
