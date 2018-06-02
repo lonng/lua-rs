@@ -1,10 +1,10 @@
 use state::{Error, Result, State};
 use std::io::{BufRead, BufReader, Read};
 use bytes::{BufMut, BytesMut};
+use std::f64;
 
 /// END_OF_STREAM indicates that scanner has reach the end of stream.
-const END_OF_STREAM: u8 = 0xFF;
-const EOF: char = END_OF_STREAM as char;
+const EOF: char = 0xFF as char;
 const INIT: char = 0x0 as char;
 
 #[derive(Debug, Clone)]
@@ -98,6 +98,10 @@ fn is_new_line(c: char) -> bool {
 
 fn is_decimal(c: char) -> bool {
     '0' <= c && c <= '9'
+}
+
+fn is_hexadecimal(c: char) -> bool {
+    ('0' <= c && c <= '9') || ('a' <= c && c <= 'z') || ('A' <= c && c <= 'Z')
 }
 
 #[derive(Debug)]
@@ -222,10 +226,10 @@ impl<R: Read> Scanner<R> {
                     let c = self.current;
                     if c.is_digit(10) {
                         return self.read_number();
-                    }else if c == '_' || c.is_alphabetic() {
+                    } else if c == '_' || c.is_ascii_alphabetic() {
                         loop {
                             self.save_and_advance();
-                            if !self.current.is_alphanumeric(){
+                            if !self.current.is_ascii_alphanumeric() {
                                 break;
                             }
                         }
@@ -240,19 +244,22 @@ impl<R: Read> Scanner<R> {
     }
 
     fn advance(&mut self) {
-        let byte: u8 = match self.reader.fill_buf() {
-            Ok(ref buf) if buf.len() > 0 => buf[0],
-            _ => END_OF_STREAM
+        let c: char = match self.reader.fill_buf() {
+            Ok(ref buf) if buf.len() > 0 => {
+                buf[0] as char
+            }
+            _ => EOF
         };
 
-        if byte != END_OF_STREAM {
+        if c != EOF {
             self.reader.consume(1)
         }
 
-        self.current = byte as char;
+        self.current = c;
     }
 
     fn save(&mut self, c: char) {
+        self.buffer.reserve(1);
         self.buffer.put(c as u8)
     }
 
@@ -297,6 +304,15 @@ impl<R: Read> Scanner<R> {
         }
 
         -i - 1
+    }
+
+    fn buf_string(&self) -> Result<String> {
+        let buf_len = self.buffer.len();
+        if buf_len > 0 {
+            Ok(String::from_utf8(self.buffer[..].to_vec())?)
+        } else {
+            Ok(String::new())
+        }
     }
 
     fn read_multi_line(&mut self, is_comment: bool, sep: isize) -> Result<String> {
@@ -419,11 +435,7 @@ impl<R: Read> Scanner<R> {
         }
 
         self.save_and_advance();
-        let mut ret = String::new();
-        let buf_len = self.buffer.len();
-        if buf_len > 0 {
-            ret = String::from_utf8(self.buffer[..].to_vec())?;
-        }
+        let ret = self.buf_string()?;
         self.buffer.clear();
         return Ok(Token::String(ret));
     }
@@ -431,15 +443,172 @@ impl<R: Read> Scanner<R> {
     fn read_hex_escape(&mut self) -> Result<char> {
         unimplemented!()
     }
+    fn read_hexadecimal(&mut self, x: f64) -> (f64, char, isize) {
+        let (mut c, mut n) = (self.current, x);
+        if !is_hexadecimal(c) {
+            return (n, c, 0);
+        }
+        let mut count: isize = 0;
+        loop {
+            let mut cvalue = c as u32;
+            match c {
+                _ if '0' <= c && c <= '9' => cvalue = cvalue - ('0' as u32),
+                _ if 'a' <= c && c <= 'z' => cvalue = cvalue - ('a' as u32) + 10,
+                _ if 'A' <= c && c <= 'z' => cvalue = cvalue - ('A' as u32) + 10,
+                _ => break
+            }
+            self.advance();
+            n = n * 16.0 + (cvalue as f64);
+            c = self.current;
+            count = count + 1;
+        }
+        (n, c, count)
+    }
+
     fn read_decimal_escape(&mut self) -> Result<char> {
         unimplemented!()
     }
 
-    fn read_number(&mut self) -> Result<Token> {
-        unimplemented!()
+    fn read_digits(&mut self) -> char {
+        loop {
+            if !is_decimal(self.current) {
+                break
+            }
+            self.save_and_advance();
+        }
+        self.current
     }
 
+    fn read_number(&mut self) -> Result<Token> {
+        let current = self.current;
+        debug_assert!(is_decimal(current));
+        self.save_and_advance();
+
+        // hexadecimal
+        if current == '0' && (self.current == 'X' || self.current == 'x') {
+            let prefix = self.buf_string()?;
+            debug_assert!(&prefix == "0x" || &prefix == "0X");
+            self.buffer.clear();
+
+            let mut exponent: isize = 0;
+            let (mut fraction, mut latest_char, mut count) = self.read_hexadecimal(0.0);
+
+            if latest_char == '.' {
+                self.advance();
+                let (frac, lchar, exp) = self.read_hexadecimal(fraction);
+                fraction = frac;
+                latest_char = lchar;
+                exponent = exp;
+            }
+
+            if count == 0 && exponent == 0 {
+                return Err(Error::LexicalError("malformed number".to_string()));
+            }
+
+            exponent = exponent * -4;
+            if latest_char == 'p' || latest_char == 'P' {
+                self.advance();
+                let mut negative_exp = false;
+                let c = self.current;
+                if c == '+' || c == '-' {
+                    negative_exp = c == '-';
+                    self.advance();
+                }
+
+                if is_decimal(self.current) {
+                    return Err(Error::LexicalError("malformed number".to_string()));
+                }
+
+                self.read_digits();
+                let digits = self.buf_string()?;
+                let number = match digits.parse::<isize>() {
+                    Ok(number) => number,
+                    _ => return Err(Error::LexicalError("malformed number".to_string()))
+                };
+
+                exponent = if negative_exp {
+                    exponent - number
+                } else {
+                    exponent + number
+                };
+
+                self.buffer.clear();
+            }
+
+            return Ok(Token::Number(fraction * (exponent as f64).exp2()));
+        }
+
+        let mut latest_char = self.read_digits();
+        if latest_char == '.' {
+            self.save_and_advance();
+            latest_char = self.read_digits();
+        }
+
+        if latest_char == 'e' || latest_char == 'E' {
+            self.save_and_advance();
+            if self.current == '+' || self.current == '-' {
+                self.save_and_advance();
+            }
+            self.read_digits();
+        }
+
+        let mut s = self.buf_string()?;
+        if s.starts_with("0") {
+            let r = s.trim_left_matches("0").to_string();
+            if r.len() < 1 || r == "" || !is_decimal(r.as_bytes()[0] as char) {
+                s = format!("0{}", r);
+            }
+        }
+
+        let number = match s.parse::<f64>() {
+            Ok(n)=> n,
+            _ => return Err(Error::LexicalError("malformed number".to_string()))
+        };
+
+        Ok(Token::Number(number))
+    }
+
+    /// Reserved words
+    ///
+    /// ```
+    /// "and", "break", "do", "else", "elseif",
+    /// "end", "false", "for", "function", "goto", "if",
+    /// "in", "local", "nil", "not", "or", "repeat",
+    /// "return", "then", "true", "until", "while",
+    /// "..", "...", "==", ">=", "<=", "~=", "::", "<eof>",
+    /// "<number>", "<name>", "<string>"];
+    /// ```
     fn reserved_or_name(&mut self) -> Result<Token> {
-        unimplemented!()
+        let s = self.buf_string()?;
+        debug_assert!(s.len() > 0);
+
+        let t = match s.as_str() {
+            "and" => Token::And,
+            "break" => Token::Break,
+            "do" => Token::Do,
+            "else" => Token::Else,
+            "elseif" => Token::Elseif,
+            "end" => Token::End,
+            "false" => Token::False,
+            "for" => Token::For,
+            "function" => Token::Function,
+            "goto" => Token::Goto,
+            "if" => Token::If,
+            "in" => Token::In,
+            "local" => Token::Local,
+            "nil" => Token::Nil,
+            "not" => Token::Not,
+            "or" => Token::Or,
+            "repeat" => Token::Repeat,
+            "return" => Token::Return,
+            "then" => Token::Then,
+            "true" => Token::True,
+            "until" => Token::Until,
+            "while" => Token::While,
+            _ => Token::Name(s),
+        };
+
+        self.buffer.clear();
+        Ok(t)
     }
 }
