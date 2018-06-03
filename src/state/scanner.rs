@@ -8,7 +8,7 @@ use std::u8;
 const EOF: char = 0xFF as char;
 const INIT: char = 0x0 as char;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Token {
     And,
     Break,
@@ -127,6 +127,10 @@ impl<R: Read> Scanner<R> {
         }
     }
 
+    pub fn line_number(&self) -> i32 {
+        self.line_number
+    }
+
     pub fn next(&mut self) -> Result<Token> {
         self.line_number = self.last_line;
         match self.ahead_token {
@@ -137,6 +141,12 @@ impl<R: Read> Scanner<R> {
                 Ok(ahead)
             }
         }
+    }
+
+    pub fn look_ahead(&mut self) -> Result<Token> {
+        debug_assert!(&self.ahead_token == &Token::EOF);
+        self.ahead_token = self.scan()?;
+        Ok(self.ahead_token.clone())
     }
 
     fn scan(&mut self) -> Result<Token> {
