@@ -2,6 +2,7 @@ use state::{Error, Result, State};
 use std::io::{BufRead, BufReader, Read};
 use bytes::{BufMut, BytesMut};
 use std::f64;
+use std::u8;
 
 /// END_OF_STREAM indicates that scanner has reach the end of stream.
 const EOF: char = 0xFF as char;
@@ -140,7 +141,7 @@ impl<R: Read> Scanner<R> {
 
     fn scan(&mut self) -> Result<Token> {
         loop {
-            println!("{:?}", self.current);
+            //println!("{:?}", self.current);
             match self.current {
                 EOF => return Ok(Token::EOF),
                 INIT => self.advance(),
@@ -221,7 +222,23 @@ impl<R: Read> Scanner<R> {
                     return Ok(Token::DoubleColon);
                 }
                 '"' | '\'' => return self.read_string(),
-                '.' => unimplemented!(),
+                '.' => {
+                    self.save_and_advance();
+                    if self.check_next(".") {
+                        let t = if self.check_next(".") {
+                            Token::Dots
+                        }else {
+                            Token::Concat
+                        };
+                        self.buffer.clear();
+                        return Ok(t);
+                    } else if !self.current.is_ascii_digit() {
+                        self.buffer.clear();
+                        return Ok(Token::Char('.'));
+                    }else {
+                        return self.read_number();
+                    }
+                },
                 _ => {
                     let c = self.current;
                     if c.is_digit(10) {
@@ -441,7 +458,29 @@ impl<R: Read> Scanner<R> {
     }
 
     fn read_hex_escape(&mut self) -> Result<char> {
-        unimplemented!()
+        self.advance();
+        let mut i = 1;
+        let mut c = self.current;
+        let mut r: u8 = 0;
+        loop {
+            if i > 2 {
+                break;
+            }
+            let mut cvalue = c as u8;
+            match c {
+                _ if '0' <= c && c <= '9' => cvalue = cvalue - ('0' as u8),
+                _ if 'a' <= c && c <= 'z' => cvalue = cvalue - ('a' as u8) + 10,
+                _ if 'A' <= c && c <= 'z' => cvalue = cvalue - ('A' as u8) + 10,
+                _ => return Err(Error::LexicalError("hexadecimal digit expected".to_string()))
+            }
+
+            self.advance();
+            i = i + 1;
+            c = self.current;
+            r = r * 16 + cvalue;
+        }
+
+        Ok(r as char)
     }
     fn read_hexadecimal(&mut self, x: f64) -> (f64, char, isize) {
         let (mut c, mut n) = (self.current, x);
@@ -466,7 +505,22 @@ impl<R: Read> Scanner<R> {
     }
 
     fn read_decimal_escape(&mut self) -> Result<char> {
-        unimplemented!()
+        let mut i = 1;
+        let mut c = self.current;
+        let mut r: u32 = 0;
+        loop {
+            if i > 2 || !is_decimal(c){
+                break;
+            }
+            let mut cvalue = c as u32;
+            r = r * 10 + (cvalue - ('0' as u32));
+            self.advance();
+            i = i + 1;
+        }
+        if r > (u8::MAX as u32) {
+            return Err(Error::LexicalError("decimal escape too large".to_string()));
+        }
+        Ok(r as u8 as char)
     }
 
     fn read_digits(&mut self) -> char {
@@ -479,13 +533,21 @@ impl<R: Read> Scanner<R> {
         self.current
     }
 
+    fn check_next(&mut self, s: &str) -> bool {
+        if self.current == INIT || !s.contains(self.current) {
+            return false;
+        }
+        self.save_and_advance();
+        true
+    }
+
     fn read_number(&mut self) -> Result<Token> {
         let current = self.current;
         debug_assert!(is_decimal(current));
         self.save_and_advance();
 
         // hexadecimal
-        if current == '0' && (self.current == 'X' || self.current == 'x') {
+        if current == '0' && self.check_next("Xx") {
             let prefix = self.buf_string()?;
             debug_assert!(&prefix == "0x" || &prefix == "0X");
             self.buffer.clear();
@@ -565,6 +627,7 @@ impl<R: Read> Scanner<R> {
             _ => return Err(Error::LexicalError("malformed number".to_string()))
         };
 
+        self.buffer.clear();
         Ok(Token::Number(number))
     }
 
