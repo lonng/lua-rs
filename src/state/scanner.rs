@@ -183,7 +183,7 @@ impl<R: Read> Scanner<R> {
                 }
                 '=' => {
                     self.advance();
-                    if self.current == '=' {
+                    if self.current != '=' {
                         return Ok(Token::Char('='));
                     }
                     self.advance();

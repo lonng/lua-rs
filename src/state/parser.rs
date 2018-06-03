@@ -24,7 +24,8 @@ impl<R: Read> Parser<R> {
             let token = self.scanner.next();
             match token {
                 Ok(Token::EOF) => break,
-                _ => println!("{:?}", token)
+                Ok(t) => println!("{:?}", t),
+                Err(e) => println!("{:?}", e)
             }
         }
 
