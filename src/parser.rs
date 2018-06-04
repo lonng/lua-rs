@@ -3,7 +3,7 @@ use state::State;
 use std::io::{BufReader, Read};
 use vm::Chunk;
 use code::{Kind, Function, ExprDesc};
-use ::{Result, Error};
+use ::{Result, Error, NO_JUMP};
 use std::mem;
 
 #[derive(Debug)]
@@ -11,11 +11,12 @@ pub struct Parser<'s, R> {
     state: &'s mut State,
     filename: String,
     scanner: Scanner<R>,
-    function: Function,
     line_number: i32,
     token: Token,
     ahead_token: Token,
+
     // entry function
+    function: Function,
     activity_vars: Vec<isize>,
     pending_gotos: Vec<isize>,
     active_labels: Vec<isize>,
@@ -92,15 +93,13 @@ impl<'s, R: Read> Parser<'s, R> {
         if self.token == Token::Return {
             self.retstat()?;
             return Ok(true);
-        }else if self.token == Token::Break {
-            self.next()?;
+        } else if self.token == Token::Break {
             self.breakstat()?;
             return Ok(true);
         }
 
         // is not last statement
         match self.token {
-            //Token::Char(char) if char == ';' => self.next()?,
             Token::If => self.ifstat(line)?,
             Token::While => self.whilestat(line)?,
             Token::Do => {
@@ -115,34 +114,66 @@ impl<'s, R: Read> Parser<'s, R> {
                 self.next()?;
                 if self.testnext(&Token::Function)? {
                     self.localfunc()?;
-                }else {
+                } else {
                     self.localstat()?;
                 }
-            },
+            }
+            Token::Char(char) if char == ';' => self.next()?,
             _ => self.exprstat()?
         }
 
         Ok(false)
     }
 
-    fn ifstat(&mut self, line: i32) -> Result<()> { Ok(()) }
-    fn whilestat(&mut self, line: i32) -> Result<()> { Ok(()) }
-    fn forstat(&mut self, line: i32) -> Result<()> { Ok(()) }
-    fn repeatstat(&mut self, line: i32) -> Result<()> { Ok(()) }
-    fn funcstat(&mut self, line: i32) -> Result<()> { Ok(()) }
-    fn localfunc(&mut self) -> Result<()> { Ok(()) }
-    fn localstat(&mut self) -> Result<()> { Ok(()) }
-    fn exprstat(&mut self) -> Result<()> { Ok(()) }
-    fn breakstat(&mut self) -> Result<()> { Ok(()) }
-    fn retstat(&mut self) -> Result<()> { Ok(()) }
-    fn block(&mut self) -> Result<()> { Ok(()) }
+    fn test_then_block(&mut self, escapes: isize) -> Result<isize> {
+        Ok(escapes)
+    }
+
+    /// ifstat -> IF cond THEN block {ELSEIF cond THEN block} [ELSE block] END
+    fn ifstat(&mut self, line: i32) -> Result<()> {
+        let mut escapes = self.test_then_block(NO_JUMP)?;
+        loop {
+            if self.token != Token::Elseif {
+                break;
+            }
+            escapes = self.test_then_block(escapes)?;
+        }
+        if self.testnext(&Token::Else)? {
+            self.block()?;
+        }
+        self.check_match(Token::End, Token::If, line)?;
+        self.function.patchtohere();
+        Ok(())
+    }
+
+    fn whilestat(&mut self, line: i32) -> Result<()> { unimplemented!() }
+    fn forstat(&mut self, line: i32) -> Result<()> { unimplemented!() }
+    fn repeatstat(&mut self, line: i32) -> Result<()> { unimplemented!() }
+    fn funcstat(&mut self, line: i32) -> Result<()> { unimplemented!() }
+    fn localfunc(&mut self) -> Result<()> { unimplemented!() }
+    fn localstat(&mut self) -> Result<()> { unimplemented!() }
+    fn exprstat(&mut self) -> Result<()> { unimplemented!() }
+    fn breakstat(&mut self) -> Result<()> {
+        self.next()?;
+        unimplemented!();
+        Ok(())
+    }
+
+    fn retstat(&mut self) -> Result<()> {
+        self.next()?;
+        unimplemented!();
+        Ok(())
+    }
+
+    fn block(&mut self) -> Result<()> { unimplemented!() }
 
     fn check_match(&mut self, what: Token, who: Token, line: i32) -> Result<()> {
         if !self.testnext(&what)? {
             let err = if line == self.line_number {
-                format!("{} expected", what.to_string())
+                format!("{}:{}: {} expected", self.filename, self.line_number, what.to_string())
             } else {
-                format!("{} expected (to close {} at line {}", what.to_string(), who.to_string(), line)
+                format!("{}:{}: {} expected (to close {} at line {}", self.filename, self.line_number,
+                        what.to_string(), who.to_string(), line)
             };
             Err(Error::SyntaxError(err))
         } else {
