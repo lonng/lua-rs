@@ -150,7 +150,7 @@ impl<R: Read> Scanner<R> {
                     if self.current == '[' {
                         let sep = self.skip_separator();
                         if sep >= 0 {
-                            self.read_multi_line(true, sep);
+                            self.read_multi_line(true, sep)?;
                             continue;
                         }
                         self.buffer.clear();
