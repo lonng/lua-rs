@@ -1,19 +1,21 @@
-use state::scanner::{Token, Scanner};
+use scanner::{Token, Scanner};
 use state::State;
 use std::io::{Read, BufReader};
 use state::Result;
 use state::Error;
-use state::vm::Chunk;
+use vm::Chunk;
 
 #[derive(Debug)]
-pub struct Parser<R> {
+pub struct Parser<'s, R> {
+    state: &'s mut State,
     filename: String,
     scanner: Scanner<R>,
 }
 
-impl<R: Read> Parser<R> {
-    pub fn new(reader: BufReader<R>, name: String) -> Parser<R> {
+impl<'s, R: Read> Parser<'s, R> {
+    pub fn new(state: &mut State, reader: BufReader<R>, name: String) -> Parser<R> {
         Parser {
+            state,
             filename: name,
             scanner: Scanner::new(reader)
         }
