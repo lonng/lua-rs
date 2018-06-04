@@ -4,6 +4,7 @@ use std::io::{BufReader, Read};
 use vm::Chunk;
 use code::{Kind, Function, ExprDesc};
 use ::{Result, Error};
+use std::mem;
 
 #[derive(Debug)]
 pub struct Parser<'s, R> {
@@ -11,7 +12,9 @@ pub struct Parser<'s, R> {
     filename: String,
     scanner: Scanner<R>,
     function: Function,
+    line_number: i32,
     token: Token,
+    ahead_token: Token,
     // entry function
     activity_vars: Vec<isize>,
     pending_gotos: Vec<isize>,
@@ -25,7 +28,9 @@ impl<'s, R: Read> Parser<'s, R> {
             filename: name,
             scanner: Scanner::new(reader),
             function: Function::new(),
+            line_number: 0,
             token: Token::EOF,
+            ahead_token: Token::EOF,
             activity_vars: Vec::new(),
             pending_gotos: Vec::new(),
             active_labels: Vec::new(),
@@ -44,19 +49,32 @@ impl<'s, R: Read> Parser<'s, R> {
 
         // push to state stack
         loop {
-            let token = self.scanner.next();
-            match token {
-                Ok(Token::EOF) => break,
-                Ok(t) => println!("{:?}", t),
-                Err(e) => println!("{:?}", e)
+            let token = self.next()?;
+            match self.token {
+                Token::EOF => break,
+                _ => println!("{:?}", self.token),
             }
         }
 
         Ok(Chunk::new())
     }
 
-    fn next(&mut self) -> Result<()>{
-        self.token = self.scanner.next()?;
+    pub fn next(&mut self) -> Result<()>{
+        self.line_number = self.scanner.line_number();
+        self.token = match self.ahead_token {
+            Token::EOF => self.scanner.scan()?,
+            _ => {
+                let mut ahead = Token::EOF;
+                mem::swap(&mut ahead, &mut self.ahead_token);
+                ahead
+            }
+        };
+        Ok(())
+    }
+
+    pub fn look_ahead(&mut self) -> Result<()> {
+        debug_assert!(&self.ahead_token == &Token::EOF);
+        self.ahead_token = self.scanner.scan()?;
         Ok(())
     }
 
