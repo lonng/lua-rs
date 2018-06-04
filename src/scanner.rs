@@ -111,9 +111,7 @@ fn is_hexadecimal(c: char) -> bool {
 pub struct Scanner<R> {
     current: char,
     reader: BufReader<R>,
-    last_line: i32,
     line_number: i32,
-    ahead_token: Token,
     buffer: BytesMut,
 }
 
@@ -122,9 +120,7 @@ impl<R: Read> Scanner<R> {
         Scanner {
             current: INIT,
             reader,
-            last_line: 1,
             line_number: 1,
-            ahead_token: Token::EOF,
             buffer: BytesMut::new(),
         }
     }
@@ -133,27 +129,9 @@ impl<R: Read> Scanner<R> {
         self.line_number
     }
 
-    pub fn next(&mut self) -> Result<Token> {
-        self.line_number = self.last_line;
-        match self.ahead_token {
-            Token::EOF => self.scan(),
-            _ => {
-                let mut ahead = Token::EOF;
-                mem::swap(&mut ahead, &mut self.ahead_token);
-                Ok(ahead)
-            }
-        }
-    }
-
-    pub fn look_ahead(&mut self) -> Result<Token> {
-        debug_assert!(&self.ahead_token == &Token::EOF);
-        self.ahead_token = self.scan()?;
-        Ok(self.ahead_token.clone())
-    }
-
-    fn scan(&mut self) -> Result<Token> {
+    pub fn scan(&mut self) -> Result<Token> {
         loop {
-            //println!("{:?}", self.current);
+            println!("{:?}", self.current);
             match self.current {
                 EOF => return Ok(Token::EOF),
                 INIT => self.advance(),
@@ -173,12 +151,15 @@ impl<R: Read> Scanner<R> {
                         let sep = self.skip_separator();
                         if sep >= 0 {
                             self.read_multi_line(true, sep);
-                            break
+                            continue;
                         }
                         self.buffer.clear();
                     }
 
-                    if is_new_line(self.current) && self.current != EOF {
+                    loop  {
+                        if is_new_line(self.current) || self.current == EOF {
+                            break;
+                        }
                         self.advance();
                     }
                 }
