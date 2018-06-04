@@ -1,16 +1,9 @@
-pub mod scanner;
-pub mod parser;
-pub mod opcode;
-pub mod vm;
-pub mod config;
-pub mod dump;
-pub mod undump;
-
 use std::io::{Read, Cursor, BufRead, BufReader};
 use std::fs::File;
 use std::io;
 use std::result;
 use std::string;
+use {undump, parser};
 
 /// A State is an opaque structure representing per thread Lua state.
 #[derive(Debug)]
@@ -21,7 +14,7 @@ pub enum Error {
     IOError(io::Error),
     LexicalError(String),
     SyntaxError(String),
-    Utf8Error
+    Utf8Error,
 }
 
 impl From<io::Error> for Error {
@@ -36,7 +29,7 @@ impl From<string::FromUtf8Error> for Error {
     }
 }
 
-type Result<T> = result::Result<T, Error>;
+pub type Result<T> = result::Result<T, Error>;
 
 impl State {
     /// Creates a new thread running in a new, independent state.
@@ -77,7 +70,7 @@ impl State {
         let chunk = if magic == 033 {
             undump::undump(reader)?
         } else {
-            let mut parser = parser::Parser::new(reader, name);
+            let mut parser = parser::Parser::new(self, reader, name);
             parser.protect_parse()?
         };
 
