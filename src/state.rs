@@ -1,10 +1,10 @@
-use std::io::{Read, Cursor, BufRead, BufReader};
+use {parser, undump};
+use ::{Error, Result};
 use std::fs::File;
+use std::io::{BufRead, BufReader, Cursor, Read};
 use std::io;
 use std::result;
 use std::string;
-use {undump, parser};
-use ::{Result, Error};
 
 /// A State is an opaque structure representing per thread Lua state.
 #[derive(Debug)]

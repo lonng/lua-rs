@@ -42,7 +42,7 @@ impl<'s, R: Read> Parser<'s, R> {
         self.next()?;
         let mut is_last = false;
         loop {
-            if is_last || self.block_follow(&self.token) {
+            if is_last || self.block_follow(&self.token, true) {
                 break;
             }
             is_last = self.statement()?;
@@ -65,9 +65,10 @@ impl<'s, R: Read> Parser<'s, R> {
         Ok(())
     }
 
-    fn block_follow(&self, t: &Token) -> bool {
+    fn block_follow(&self, t: &Token, with_until: bool) -> bool {
         match *t {
-            Token::Else | Token::Elseif | Token::End | Token::Until | Token::EOF => true,
+            Token::Else | Token::Elseif | Token::End | Token::EOF => true,
+            Token::Until => with_until,
             _ => false,
         }
     }
@@ -126,6 +127,9 @@ impl<'s, R: Read> Parser<'s, R> {
     }
 
     fn test_then_block(&mut self, escapes: isize) -> Result<isize> {
+        let mut jump_false = 0;
+        self.next()?;
+        //let mut e = self.expression()?;
         Ok(escapes)
     }
 
