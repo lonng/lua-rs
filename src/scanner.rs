@@ -131,7 +131,7 @@ impl<R: Read> Scanner<R> {
 
     pub fn scan(&mut self) -> Result<Token> {
         loop {
-            println!("{:?}", self.current);
+            //println!("{:?}", self.current);
             match self.current {
                 EOF => return Ok(Token::EOF),
                 INIT => self.advance(),
@@ -627,10 +627,12 @@ impl<R: Read> Scanner<R> {
     /// Reserved words
     ///
     /// ```
+    /// /* terminal symbols denoted by reserved words */
     /// "and", "break", "do", "else", "elseif",
     /// "end", "false", "for", "function", "goto", "if",
     /// "in", "local", "nil", "not", "or", "repeat",
     /// "return", "then", "true", "until", "while",
+    /// /* other terminal symbols */
     /// "..", "...", "==", ">=", "<=", "~=", "::", "<eof>",
     /// "<number>", "<name>", "<string>"];
     /// ```
