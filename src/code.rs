@@ -178,4 +178,8 @@ impl Function {
     pub fn make_upval(&mut self, name: &str, expr: ExprDesc) -> Result<usize> {
         Ok(0)
     }
+
+    pub fn patchtohere(&mut self) {
+        unimplemented!()
+    }
 }
