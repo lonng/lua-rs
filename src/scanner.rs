@@ -3,6 +3,7 @@ use std::io::{BufRead, BufReader, Read};
 use bytes::{BufMut, BytesMut};
 use std::f64;
 use std::u8;
+use std::mem;
 
 /// END_OF_STREAM indicates that scanner has reach the end of stream.
 const EOF: char = 0xFF as char;
@@ -136,8 +137,8 @@ impl<R: Read> Scanner<R> {
         match self.ahead_token {
             Token::EOF => self.scan(),
             _ => {
-                let ahead = self.ahead_token.clone();
-                self.ahead_token = Token::EOF;
+                let mut ahead = Token::EOF;
+                mem::swap(&mut ahead, &mut self.ahead_token);
                 Ok(ahead)
             }
         }
