@@ -1,9 +1,10 @@
-use state::{Error, Result, State};
+use state::{State};
 use std::io::{BufRead, BufReader, Read};
 use bytes::{BufMut, BytesMut};
 use std::f64;
 use std::u8;
 use std::mem;
+use ::{Result, Error};
 
 /// END_OF_STREAM indicates that scanner has reach the end of stream.
 const EOF: char = 0xFF as char;
