@@ -4,32 +4,11 @@ use std::io;
 use std::result;
 use std::string;
 use {undump, parser};
+use ::{Result, Error};
 
 /// A State is an opaque structure representing per thread Lua state.
 #[derive(Debug)]
 pub struct State {}
-
-#[derive(Debug)]
-pub enum Error {
-    IOError(io::Error),
-    LexicalError(String),
-    SyntaxError(String),
-    Utf8Error,
-}
-
-impl From<io::Error> for Error {
-    fn from(e: io::Error) -> Self {
-        Error::IOError(e)
-    }
-}
-
-impl From<string::FromUtf8Error> for Error {
-    fn from(_: string::FromUtf8Error) -> Self {
-        Error::Utf8Error
-    }
-}
-
-pub type Result<T> = result::Result<T, Error>;
 
 impl State {
     /// Creates a new thread running in a new, independent state.
@@ -71,7 +50,7 @@ impl State {
             undump::undump(reader)?
         } else {
             let mut parser = parser::Parser::new(self, reader, name);
-            parser.protect_parse()?
+            parser.parse()?
         };
 
         // TODO: save chunk
