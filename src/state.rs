@@ -27,18 +27,18 @@ impl State {
     pub fn load_file(&mut self, path: &str) -> Result<()> {
         let f = File::open(path)?;
         let mut reader = BufReader::new(f);
-        self.load(reader, path.to_string())
+        self.load(reader, path)
     }
 
     pub fn load_string(&mut self, s: &str) -> Result<()> {
         let cursor = Cursor::new(s.as_bytes());
         let mut reader = BufReader::new(cursor);
-        self.load(reader, s.to_string())
+        self.load(reader, "<string>")
     }
 
     /// Load lua chunk from reader
     /// Signature `\033Lua` indicates precompiled lua bytecode
-    pub fn load<T: Read>(&mut self, mut reader: BufReader<T>, name: String) -> Result<()> {
+    pub fn load<T: Read>(&mut self, mut reader: BufReader<T>, name: &str) -> Result<()> {
         let mut magic: u8 = 0;
         {
             let buf = reader.fill_buf()?;
@@ -49,7 +49,7 @@ impl State {
         let chunk = if magic == 033 {
             undump::undump(reader)?
         } else {
-            let mut parser = parser::Parser::new(self, reader, name);
+            let mut parser = parser::Parser::new(reader, name.to_string());
             parser.parse()?
         };
 

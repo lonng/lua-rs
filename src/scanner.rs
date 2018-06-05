@@ -1,10 +1,10 @@
-use state::{State};
-use std::io::{BufRead, BufReader, Read};
+use ::{Error, Result};
 use bytes::{BufMut, BytesMut};
+use state::State;
 use std::f64;
-use std::u8;
+use std::io::{BufRead, BufReader, Read};
 use std::mem;
-use ::{Result, Error};
+use std::u8;
 
 /// END_OF_STREAM indicates that scanner has reach the end of stream.
 const EOF: char = 0xFF as char;
@@ -21,7 +21,6 @@ pub enum Token {
     False,
     For,
     Function,
-    Goto,
     If,
     In,
     Local,
@@ -40,10 +39,9 @@ pub enum Token {
     GE,
     LE,
     NE,
-    DoubleColon,
     EOF,
     Number(f64),
-    Name(String),
+    Ident(String),
     String(String),
     Char(char),
 }
@@ -52,7 +50,7 @@ impl ToString for Token {
     fn to_string(&self) -> String {
         match *self {
             Token::Number(ff) => format!("{}", ff),
-            Token::Name(ref s) => s.clone(),
+            Token::Ident(ref s) => s.clone(),
             Token::String(ref s) => s.clone(),
             Token::Char(ref c) => c.to_string(),
             _ => {
@@ -66,7 +64,6 @@ impl ToString for Token {
                     Token::False => "false",
                     Token::For => "for",
                     Token::Function => "function",
-                    Token::Goto => "goto",
                     Token::If => "if",
                     Token::In => "in",
                     Token::Local => "local",
@@ -85,7 +82,6 @@ impl ToString for Token {
                     Token::GE => ">=",
                     Token::LE => "<=",
                     Token::NE => "~=",
-                    Token::DoubleColon => "::",
                     Token::EOF => "<eof>",
                     _ => unreachable!()
                 };
@@ -109,19 +105,19 @@ fn is_hexadecimal(c: char) -> bool {
 
 #[derive(Debug)]
 pub struct Scanner<R> {
-    current: char,
     reader: BufReader<R>,
-    line_number: i32,
     buffer: BytesMut,
+    line_number: i32,
+    current: char,
 }
 
 impl<R: Read> Scanner<R> {
     pub fn new(reader: BufReader<R>) -> Scanner<R> {
         Scanner {
-            current: INIT,
             reader,
-            line_number: 1,
             buffer: BytesMut::new(),
+            line_number: 1,
+            current: INIT,
         }
     }
 
@@ -156,7 +152,7 @@ impl<R: Read> Scanner<R> {
                         self.buffer.clear();
                     }
 
-                    loop  {
+                    loop {
                         if is_new_line(self.current) || self.current == EOF {
                             break;
                         }
@@ -184,7 +180,7 @@ impl<R: Read> Scanner<R> {
                 }
                 '<' => {
                     self.advance();
-                    if self.current == '=' {
+                    if self.current != '=' {
                         return Ok(Token::Char('<'));
                     }
                     self.advance();
@@ -192,7 +188,7 @@ impl<R: Read> Scanner<R> {
                 }
                 '>' => {
                     self.advance();
-                    if self.current == '=' {
+                    if self.current != '=' {
                         return Ok(Token::Char('>'));
                     }
                     self.advance();
@@ -200,19 +196,11 @@ impl<R: Read> Scanner<R> {
                 }
                 '~' => {
                     self.advance();
-                    if self.current == '=' {
+                    if self.current != '=' {
                         return Ok(Token::Char('~'));
                     }
                     self.advance();
                     return Ok(Token::NE);
-                }
-                ':' => {
-                    self.advance();
-                    if self.current == ':' {
-                        return Ok(Token::Char(':'));
-                    }
-                    self.advance();
-                    return Ok(Token::DoubleColon);
                 }
                 '"' | '\'' => return self.read_string(),
                 '.' => {
@@ -220,7 +208,7 @@ impl<R: Read> Scanner<R> {
                     if self.check_next(".") {
                         let t = if self.check_next(".") {
                             Token::Dots
-                        }else {
+                        } else {
                             Token::Concat
                         };
                         self.buffer.clear();
@@ -228,10 +216,10 @@ impl<R: Read> Scanner<R> {
                     } else if !self.current.is_ascii_digit() {
                         self.buffer.clear();
                         return Ok(Token::Char('.'));
-                    }else {
+                    } else {
                         return self.read_number();
                     }
-                },
+                }
                 _ => {
                     let c = self.current;
                     if c.is_digit(10) {
@@ -368,7 +356,7 @@ impl<R: Read> Scanner<R> {
                 }
             }
         }
-        Ok(String::new())
+        unreachable!()
     }
 
     fn read_string(&mut self) -> Result<Token> {
@@ -475,6 +463,7 @@ impl<R: Read> Scanner<R> {
 
         Ok(r as char)
     }
+
     fn read_hexadecimal(&mut self, x: f64) -> (f64, char, isize) {
         let (mut c, mut n) = (self.current, x);
         if !is_hexadecimal(c) {
@@ -502,7 +491,7 @@ impl<R: Read> Scanner<R> {
         let mut c = self.current;
         let mut r: u32 = 0;
         loop {
-            if i > 2 || !is_decimal(c){
+            if i > 2 || !is_decimal(c) {
                 break;
             }
             let mut cvalue = c as u32;
@@ -616,7 +605,7 @@ impl<R: Read> Scanner<R> {
         }
 
         let number = match s.parse::<f64>() {
-            Ok(n)=> n,
+            Ok(n) => n,
             _ => return Err(Error::LexicalError("malformed number".to_string()))
         };
 
@@ -629,7 +618,7 @@ impl<R: Read> Scanner<R> {
     /// ```
     /// /* terminal symbols denoted by reserved words */
     /// "and", "break", "do", "else", "elseif",
-    /// "end", "false", "for", "function", "goto", "if",
+    /// "end", "false", "for", "function", "if",
     /// "in", "local", "nil", "not", "or", "repeat",
     /// "return", "then", "true", "until", "while",
     /// /* other terminal symbols */
@@ -650,7 +639,6 @@ impl<R: Read> Scanner<R> {
             "false" => Token::False,
             "for" => Token::For,
             "function" => Token::Function,
-            "goto" => Token::Goto,
             "if" => Token::If,
             "in" => Token::In,
             "local" => Token::Local,
@@ -663,7 +651,7 @@ impl<R: Read> Scanner<R> {
             "true" => Token::True,
             "until" => Token::Until,
             "while" => Token::While,
-            _ => Token::Name(s),
+            _ => Token::Ident(s),
         };
 
         self.buffer.clear();

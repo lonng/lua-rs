@@ -1,13 +1,15 @@
+use ast::StmtNode;
+
 
 #[derive(Debug)]
 pub struct Chunk {
-    prev: Option<Box<Chunk>>
+    stmts: Vec<StmtNode>
 }
 
 impl Chunk {
     pub fn new() -> Box<Chunk> {
         Box::new(Chunk{
-            prev: None
+            stmts: vec![]
         })
     }
 }

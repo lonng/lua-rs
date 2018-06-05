@@ -3,12 +3,12 @@ extern crate bytes;
 pub mod state;
 pub mod scanner;
 pub mod parser;
-pub mod code;
 pub mod vm;
 pub mod config;
 pub mod dump;
 pub mod undump;
 pub mod instruction;
+pub mod ast;
 
 use std::io;
 use std::string;
