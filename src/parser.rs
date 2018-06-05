@@ -14,6 +14,7 @@ pub struct Parser<'s, R> {
     line_number: i32,
     token: Token,
     ahead_token: Token,
+    nc_calls: i32,
 
     // entry function
     function: Function,
@@ -35,19 +36,15 @@ impl<'s, R: Read> Parser<'s, R> {
             activity_vars: Vec::new(),
             pending_gotos: Vec::new(),
             active_labels: Vec::new(),
+            nc_calls: 0,
         }
     }
 
     pub fn parse(&mut self) -> Result<Box<Chunk>> {
+        // main function
         self.next()?;
-        let mut is_last = false;
-        loop {
-            if is_last || self.block_follow(&self.token, true) {
-                break;
-            }
-            is_last = self.statement()?;
-            // TODO: assert max stack size
-        }
+        self.statement_list()?;
+        self.check(Token::EOF)?;
         Ok(Chunk::new())
     }
 
@@ -65,12 +62,34 @@ impl<'s, R: Read> Parser<'s, R> {
         Ok(())
     }
 
-    fn block_follow(&self, t: &Token, with_until: bool) -> bool {
-        match *t {
+    fn enterlevel(&mut self) {
+        self.nc_calls = self.nc_calls + 1;
+    }
+
+    fn leavelevel(&mut self) {
+        self.nc_calls = self.nc_calls - 1;
+    }
+
+    fn block_follow(&self, with_until: bool) -> bool {
+        match self.token {
             Token::Else | Token::Elseif | Token::End | Token::EOF => true,
             Token::Until => with_until,
             _ => false,
         }
+    }
+
+    fn statement_list(&mut self) -> Result<()> {
+        loop {
+            if self.block_follow(true) {
+                break;
+            }
+
+            self.statement()?;
+            if self.token == Token::Return {
+                break;
+            }
+        }
+        return Ok(());
     }
 
     fn look_ahead(&mut self) -> Result<()> {
@@ -87,18 +106,9 @@ impl<'s, R: Read> Parser<'s, R> {
         Ok(false)
     }
 
-    fn statement(&mut self) -> Result<bool> {
+    fn statement(&mut self) -> Result<()> {
         let line = self.line_number;
-
-        // must be last statement
-        if self.token == Token::Return {
-            self.retstat()?;
-            return Ok(true);
-        } else if self.token == Token::Break {
-            self.breakstat()?;
-            return Ok(true);
-        }
-
+        self.enterlevel();
         // is not last statement
         match self.token {
             Token::If => self.ifstat(line)?,
@@ -119,11 +129,22 @@ impl<'s, R: Read> Parser<'s, R> {
                     self.localstat()?;
                 }
             }
+            Token::DoubleColon => {
+                self.next()?;
+                self.lebalstat()?;
+            },
+            Token::Return => {
+                self.next()?;
+                self.retstat()?;
+            },
+            Token::Break | Token::Goto => self.gotostat()?,
             Token::Char(char) if char == ';' => self.next()?,
             _ => self.exprstat()?
         }
-
-        Ok(false)
+        // TODO: assert
+        //self.function.free_register_count  = self.function.active_var_count;
+        self.enterlevel();
+        Ok(())
     }
 
     fn test_then_block(&mut self, escapes: isize) -> Result<isize> {
@@ -157,19 +178,26 @@ impl<'s, R: Read> Parser<'s, R> {
     fn localfunc(&mut self) -> Result<()> { unimplemented!() }
     fn localstat(&mut self) -> Result<()> { unimplemented!() }
     fn exprstat(&mut self) -> Result<()> { unimplemented!() }
-    fn breakstat(&mut self) -> Result<()> {
-        self.next()?;
+    fn lebalstat(&mut self) -> Result<()> { unimplemented!() }
+    fn gotostat(&mut self) -> Result<()> {
         unimplemented!();
         Ok(())
     }
 
     fn retstat(&mut self) -> Result<()> {
-        self.next()?;
         unimplemented!();
         Ok(())
     }
 
     fn block(&mut self) -> Result<()> { unimplemented!() }
+
+    fn check(&self, expect: Token) -> Result<()> {
+        if self.token != expect {
+            return Err(Error::SyntaxError(format!("{}:{}: {} expected",
+                                                  self.filename, self.line_number, expect.to_string())));
+        }
+        Ok(())
+    }
 
     fn check_match(&mut self, what: Token, who: Token, line: i32) -> Result<()> {
         if !self.testnext(&what)? {
