@@ -1,7 +1,13 @@
 use std::collections::HashMap;
 use std::mem;
-use ::{Result, Error};
+use ::{Result, Error, NO_JUMP};
 use parser::Opr;
+use instruction::{Instruction, OpCode};
+
+pub enum TableType {
+    Local,
+    UpVal
+}
 
 /// Kind represent expression kind
 ///
@@ -27,29 +33,34 @@ pub enum Kind {
     NonRelocatable(usize),
     Local(usize),
     UpValue(usize),
-    Indexed(usize, usize),
+    Indexed(TableType, usize, usize),
     Jump(usize),
     Relocatable(usize),
     Call(usize),
     VarArg(usize),
 }
 
-type Instruction = u32;
 
 pub struct ExprDesc {
     kind: Kind,
-    table_type: i32,
-    t: i32,
-    f: i32,
+    t: isize,
+    f: isize,
 }
 
 impl ExprDesc {
     pub fn new(kind: Kind) -> ExprDesc {
         ExprDesc {
             kind,
-            table_type: 0,
-            t: 0,
-            f: 0,
+            t: NO_JUMP,
+            f: NO_JUMP,
+        }
+    }
+
+    pub fn is_numeral(&self) -> bool {
+        if let Kind::Number(_) = self.kind {
+            self.t == NO_JUMP && self.f == NO_JUMP
+        }else {
+            false
         }
     }
 }
@@ -184,15 +195,48 @@ impl Function {
         unimplemented!()
     }
 
-    pub fn prefix(&mut self, op: Opr, sub: &ExprDesc, line: i32) -> ExprDesc {
+    fn expression2any_reg(&self, e: &ExprDesc) -> ExprDesc {
         unimplemented!()
+    }
+
+    fn encode_arithmetic(&self, op: OpCode, e1: &ExprDesc, e2: &ExprDesc, line: i32) -> ExprDesc {
+        unimplemented!()
+    }
+
+    fn encode_not(&self, e: &ExprDesc) -> ExprDesc {
+        unimplemented!()
+    }
+
+    /// unary operator prefix
+    pub fn prefix(&mut self, op: Opr, sub: &ExprDesc, line: i32) -> ExprDesc {
+        match op {
+            Opr::Minus => {
+                match sub.kind {
+                    Kind::Number(n) if sub.f == NO_JUMP && sub.t == NO_JUMP => {
+                        ExprDesc::new(Kind::Number(-n))
+                    },
+                    _ => {
+                        let e1 = self.expression2any_reg(sub);
+                        let e2 = ExprDesc::new(Kind::Number(0.0));
+                        self.encode_arithmetic(OpCode::UnaryMinus, &e1, &e2, line)
+                    }
+                }
+            },
+            Opr::Not => self.encode_not(sub),
+            Opr::Length => {
+                let e1 = self.expression2any_reg(sub);
+                let e2 = ExprDesc::new(Kind::Number(0.0));
+                self.encode_arithmetic(OpCode::Length, &e1, &e2, line)
+            },
+            _ => unreachable!()
+        }
     }
 
     pub fn infix(&mut self, op: Opr, infix: &ExprDesc) -> ExprDesc {
         unimplemented!()
     }
 
-    pub fn postfix(&mut self, op: Opr, expr: &ExprDesc, sub: &ExprDesc, line: i32) -> ExprDesc {
+    pub fn postfix(&mut self, op: Opr, infix: &ExprDesc, sub: &ExprDesc, line: i32) -> ExprDesc {
         unimplemented!()
     }
 }

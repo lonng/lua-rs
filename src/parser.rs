@@ -214,7 +214,12 @@ impl<'s, R: Read> Parser<'s, R> {
     }
 
     fn simple_expr(&mut self) -> Result<ExprDesc> {
-        unimplemented!()
+        let e = match self.token {
+            Token::Number(n) => ExprDesc::new(Kind::Number(n)),
+            Token::String(s) =>
+        };
+        self.next()?;
+        Ok(e)
     }
 
     fn sub_expression(&mut self, limit: u8) -> Result<(ExprDesc, Opr)> {
@@ -238,7 +243,7 @@ impl<'s, R: Read> Parser<'s, R> {
             self.next()?;
             let infix = self.function.infix(op, &expr);
             let sub = self.sub_expression(BINARY_PRIORITY[op as usize].0)?;
-            expr = self.function.postfix(op, &expr, &sub.0, line);
+            expr = self.function.postfix(op, &infix, &sub.0, line);
             op = sub.1
         }
         self.leavelevel();
