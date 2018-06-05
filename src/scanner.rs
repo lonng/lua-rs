@@ -1,10 +1,10 @@
-use state::{State};
-use std::io::{BufRead, BufReader, Read};
+use ::{Error, Result};
 use bytes::{BufMut, BytesMut};
+use state::State;
 use std::f64;
-use std::u8;
+use std::io::{BufRead, BufReader, Read};
 use std::mem;
-use ::{Result, Error};
+use std::u8;
 
 /// END_OF_STREAM indicates that scanner has reach the end of stream.
 const EOF: char = 0xFF as char;
@@ -109,19 +109,19 @@ fn is_hexadecimal(c: char) -> bool {
 
 #[derive(Debug)]
 pub struct Scanner<R> {
-    current: char,
     reader: BufReader<R>,
-    line_number: i32,
     buffer: BytesMut,
+    line_number: i32,
+    current: char,
 }
 
 impl<R: Read> Scanner<R> {
     pub fn new(reader: BufReader<R>) -> Scanner<R> {
         Scanner {
-            current: INIT,
             reader,
-            line_number: 1,
             buffer: BytesMut::new(),
+            line_number: 1,
+            current: INIT,
         }
     }
 
@@ -156,7 +156,7 @@ impl<R: Read> Scanner<R> {
                         self.buffer.clear();
                     }
 
-                    loop  {
+                    loop {
                         if is_new_line(self.current) || self.current == EOF {
                             break;
                         }
@@ -220,7 +220,7 @@ impl<R: Read> Scanner<R> {
                     if self.check_next(".") {
                         let t = if self.check_next(".") {
                             Token::Dots
-                        }else {
+                        } else {
                             Token::Concat
                         };
                         self.buffer.clear();
@@ -228,10 +228,10 @@ impl<R: Read> Scanner<R> {
                     } else if !self.current.is_ascii_digit() {
                         self.buffer.clear();
                         return Ok(Token::Char('.'));
-                    }else {
+                    } else {
                         return self.read_number();
                     }
-                },
+                }
                 _ => {
                     let c = self.current;
                     if c.is_digit(10) {
@@ -475,6 +475,7 @@ impl<R: Read> Scanner<R> {
 
         Ok(r as char)
     }
+
     fn read_hexadecimal(&mut self, x: f64) -> (f64, char, isize) {
         let (mut c, mut n) = (self.current, x);
         if !is_hexadecimal(c) {
@@ -502,7 +503,7 @@ impl<R: Read> Scanner<R> {
         let mut c = self.current;
         let mut r: u32 = 0;
         loop {
-            if i > 2 || !is_decimal(c){
+            if i > 2 || !is_decimal(c) {
                 break;
             }
             let mut cvalue = c as u32;
@@ -616,7 +617,7 @@ impl<R: Read> Scanner<R> {
         }
 
         let number = match s.parse::<f64>() {
-            Ok(n)=> n,
+            Ok(n) => n,
             _ => return Err(Error::LexicalError("malformed number".to_string()))
         };
 

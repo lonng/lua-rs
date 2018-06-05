@@ -73,36 +73,22 @@ static BINARY_PRIORITY: &'static [(u8, u8)/*(left, right)*/; 15] = &[
 const UNARY_PRIORITY: u8 = 8;
 
 #[derive(Debug)]
-pub struct Parser<'s, R> {
-    state: &'s mut State,
-    filename: String,
+pub struct Parser<R> {
+    source: String,
     scanner: Scanner<R>,
     line_number: i32,
     token: Token,
     ahead_token: Token,
-    nc_calls: i32,
-
-    // entry function
-    function: Function,
-    activity_vars: Vec<isize>,
-    pending_gotos: Vec<isize>,
-    active_labels: Vec<isize>,
 }
 
-impl<'s, R: Read> Parser<'s, R> {
-    pub fn new(state: &mut State, reader: BufReader<R>, name: String) -> Parser<R> {
+impl<R: Read> Parser<R> {
+    pub fn new(reader: BufReader<R>, name: String) -> Parser<R> {
         Parser {
-            state,
-            filename: name,
+            source: name,
             scanner: Scanner::new(reader),
-            function: Function::new(),
             line_number: 0,
             token: Token::EOF,
             ahead_token: Token::EOF,
-            activity_vars: Vec::new(),
-            pending_gotos: Vec::new(),
-            active_labels: Vec::new(),
-            nc_calls: 0,
         }
     }
 
@@ -132,14 +118,6 @@ impl<'s, R: Read> Parser<'s, R> {
         debug_assert!(&self.ahead_token == &Token::EOF);
         self.ahead_token = self.scanner.scan()?;
         Ok(())
-    }
-
-    fn enterlevel(&mut self) {
-        self.nc_calls = self.nc_calls + 1;
-    }
-
-    fn leavelevel(&mut self) {
-        self.nc_calls = self.nc_calls - 1;
     }
 
     fn block_follow(&self, with_until: bool) -> bool {
@@ -174,7 +152,6 @@ impl<'s, R: Read> Parser<'s, R> {
 
     fn statement(&mut self) -> Result<()> {
         let line = self.line_number;
-        self.enterlevel();
         // is not last statement
         match self.token {
             Token::If => self.ifstat(line)?,
@@ -209,27 +186,24 @@ impl<'s, R: Read> Parser<'s, R> {
         }
         // TODO: assert
         //self.function.free_register_count  = self.function.active_var_count;
-        self.enterlevel();
         Ok(())
     }
 
     fn simple_expr(&mut self) -> Result<ExprDesc> {
         let e = match self.token {
-            Token::Number(n) => ExprDesc::new(Kind::Number(n)),
-            Token::String(s) =>
+            _ => unimplemented!()
         };
         self.next()?;
         Ok(e)
     }
 
     fn sub_expression(&mut self, limit: u8) -> Result<(ExprDesc, Opr)> {
-        self.enterlevel();
         let op = unary_op(&self.token);
         let mut expr = if op != Opr::NoUnary {
             let line = self.line_number;
             self.next()?;
             let sub = self.sub_expression(UNARY_PRIORITY)?.0;
-            self.function.prefix(op, &sub, line)
+            unimplemented!()
         } else {
             self.simple_expr()?
         };
@@ -241,12 +215,9 @@ impl<'s, R: Read> Parser<'s, R> {
             }
             let line = self.line_number;
             self.next()?;
-            let infix = self.function.infix(op, &expr);
             let sub = self.sub_expression(BINARY_PRIORITY[op as usize].0)?;
-            expr = self.function.postfix(op, &infix, &sub.0, line);
             op = sub.1
         }
-        self.leavelevel();
         Ok((expr, op))
     }
 
@@ -278,7 +249,6 @@ impl<'s, R: Read> Parser<'s, R> {
             self.block()?;
         }
         self.check_match(Token::End, Token::If, line)?;
-        self.function.patchtohere();
         Ok(())
     }
 
@@ -310,7 +280,7 @@ impl<'s, R: Read> Parser<'s, R> {
     fn check(&self, expect: Token) -> Result<()> {
         if self.token != expect {
             return Err(Error::SyntaxError(format!("{}:{}: {} expected",
-                                                  self.filename, self.line_number, expect.to_string())));
+                                                  self.source, self.line_number, expect.to_string())));
         }
         Ok(())
     }
@@ -318,9 +288,9 @@ impl<'s, R: Read> Parser<'s, R> {
     fn check_match(&mut self, what: Token, who: Token, line: i32) -> Result<()> {
         if !self.testnext(&what)? {
             let err = if line == self.line_number {
-                format!("{}:{}: {} expected", self.filename, self.line_number, what.to_string())
+                format!("{}:{}: {} expected", self.source, self.line_number, what.to_string())
             } else {
-                format!("{}:{}: {} expected (to close {} at line {}", self.filename, self.line_number,
+                format!("{}:{}: {} expected (to close {} at line {}", self.source, self.line_number,
                         what.to_string(), who.to_string(), line)
             };
             Err(Error::SyntaxError(err))
