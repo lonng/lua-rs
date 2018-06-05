@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::mem;
 use ::{Result, Error};
+use parser::Opr;
 
 /// Kind represent expression kind
 ///
@@ -180,6 +181,18 @@ impl Function {
     }
 
     pub fn patchtohere(&mut self) {
+        unimplemented!()
+    }
+
+    pub fn prefix(&mut self, op: Opr, sub: &ExprDesc, line: i32) -> ExprDesc {
+        unimplemented!()
+    }
+
+    pub fn infix(&mut self, op: Opr, infix: &ExprDesc) -> ExprDesc {
+        unimplemented!()
+    }
+
+    pub fn postfix(&mut self, op: Opr, expr: &ExprDesc, sub: &ExprDesc, line: i32) -> ExprDesc {
         unimplemented!()
     }
 }

@@ -6,6 +6,72 @@ use code::{Kind, Function, ExprDesc};
 use ::{Result, Error, NO_JUMP};
 use std::mem;
 
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum Opr {
+    /*binary*/
+    Add = 0,
+    Sub,
+    Mul,
+    Div,
+    Mod,
+    Pow,
+    Concat,
+    Eq,
+    LT,
+    LE,
+    NE,
+    GT,
+    GE,
+    And,
+    Or,
+    NoBinary,
+    /*unary*/
+    Minus,
+    Not,
+    Length,
+    NoUnary,
+}
+
+fn unary_op(t: &Token) -> Opr {
+    match *t {
+        Token::Not => Opr::Not,
+        Token::Char(c) if c == '-' => Opr::Minus,
+        Token::Char(c) if c == '#' => Opr::Length,
+        _ => Opr::NoUnary
+    }
+}
+
+fn binary_op(t: &Token) -> Opr {
+    match *t {
+        Token::Char(c) if c == '+' => Opr::Add,
+        Token::Char(c) if c == '-' => Opr::Sub,
+        Token::Char(c) if c == '*' => Opr::Mul,
+        Token::Char(c) if c == '/' => Opr::Div,
+        Token::Char(c) if c == '%' => Opr::Mod,
+        Token::Char(c) if c == '^' => Opr::Pow,
+        Token::Concat => Opr::Concat,
+        Token::NE => Opr::NE,
+        Token::Eq => Opr::Eq,
+        Token::Char(c) if c == '<' => Opr::LT,
+        Token::LE => Opr::LE,
+        Token::Char(c) if c == '>' => Opr::GT,
+        Token::GE => Opr::GE,
+        Token::And => Opr::And,
+        Token::Or => Opr::Or,
+        _ => Opr::NoBinary,
+    }
+}
+
+static BINARY_PRIORITY: &'static [(u8, u8)/*(left, right)*/; 15] = &[
+    (6, 6), (6, 6), (7, 7), (7, 7), (7, 7), // `+' `-' `*' `/' `%'
+    (10, 9), (5, 4), // ^, .. (right associative)
+    (3, 3), (3, 3), (3, 3), // ==, <, <=
+    (3, 3), (3, 3), (3, 3), // ~=, >, >=
+    (2, 2), (1, 1), // and, or
+];
+
+const UNARY_PRIORITY: u8 = 8;
+
 #[derive(Debug)]
 pub struct Parser<'s, R> {
     state: &'s mut State,
@@ -62,6 +128,12 @@ impl<'s, R: Read> Parser<'s, R> {
         Ok(())
     }
 
+    fn look_ahead(&mut self) -> Result<()> {
+        debug_assert!(&self.ahead_token == &Token::EOF);
+        self.ahead_token = self.scanner.scan()?;
+        Ok(())
+    }
+
     fn enterlevel(&mut self) {
         self.nc_calls = self.nc_calls + 1;
     }
@@ -90,12 +162,6 @@ impl<'s, R: Read> Parser<'s, R> {
             }
         }
         return Ok(());
-    }
-
-    fn look_ahead(&mut self) -> Result<()> {
-        debug_assert!(&self.ahead_token == &Token::EOF);
-        self.ahead_token = self.scanner.scan()?;
-        Ok(())
     }
 
     fn testnext(&mut self, t: &Token) -> Result<bool> {
@@ -132,11 +198,11 @@ impl<'s, R: Read> Parser<'s, R> {
             Token::DoubleColon => {
                 self.next()?;
                 self.lebalstat()?;
-            },
+            }
             Token::Return => {
                 self.next()?;
                 self.retstat()?;
-            },
+            }
             Token::Break | Token::Goto => self.gotostat()?,
             Token::Char(char) if char == ';' => self.next()?,
             _ => self.exprstat()?
@@ -147,10 +213,50 @@ impl<'s, R: Read> Parser<'s, R> {
         Ok(())
     }
 
+    fn simple_expr(&mut self) -> Result<ExprDesc> {
+        unimplemented!()
+    }
+
+    fn sub_expression(&mut self, limit: u8) -> Result<(ExprDesc, Opr)> {
+        self.enterlevel();
+        let op = unary_op(&self.token);
+        let mut expr = if op != Opr::NoUnary {
+            let line = self.line_number;
+            self.next()?;
+            let sub = self.sub_expression(UNARY_PRIORITY)?.0;
+            self.function.prefix(op, &sub, line)
+        } else {
+            self.simple_expr()?
+        };
+
+        let mut op = binary_op(&self.token);
+        loop {
+            if op == Opr::NoBinary || BINARY_PRIORITY[op as usize].1 <= limit {
+                break;
+            }
+            let line = self.line_number;
+            self.next()?;
+            let infix = self.function.infix(op, &expr);
+            let sub = self.sub_expression(BINARY_PRIORITY[op as usize].0)?;
+            expr = self.function.postfix(op, &expr, &sub.0, line);
+            op = sub.1
+        }
+        self.leavelevel();
+        Ok((expr, op))
+    }
+
+    fn expression(&mut self) -> Result<ExprDesc> {
+        let r = self.sub_expression(0)?;
+        Ok(r.0)
+    }
+
     fn test_then_block(&mut self, escapes: isize) -> Result<isize> {
         let mut jump_false = 0;
         self.next()?;
-        //let mut e = self.expression()?;
+        let mut e = self.expression()?;
+        self.check_next(Token::Then)?;
+
+
         Ok(escapes)
     }
 
@@ -190,6 +296,11 @@ impl<'s, R: Read> Parser<'s, R> {
     }
 
     fn block(&mut self) -> Result<()> { unimplemented!() }
+
+    fn check_next(&mut self, expect: Token) -> Result<()> {
+        self.check(expect)?;
+        self.next()
+    }
 
     fn check(&self, expect: Token) -> Result<()> {
         if self.token != expect {
