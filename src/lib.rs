@@ -8,6 +8,7 @@ pub mod vm;
 pub mod config;
 pub mod dump;
 pub mod undump;
+pub mod instruction;
 
 use std::io;
 use std::string;
