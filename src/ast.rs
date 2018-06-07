@@ -1,3 +1,26 @@
+
+/// Node represents a node in abstract syntax tree
+pub struct Node<T> {
+    line: isize,
+    last_line: isize,
+    inner: T,
+}
+
+impl<T> Node<T> {
+    pub fn new(inner: T) -> Node<T> {
+        Node {
+            line: 0,
+            last_line: 0,
+            inner,
+        }
+    }
+
+    fn line(&self) -> isize { self.line }
+    fn set_line(&mut self, line: isize) { self.line = line }
+    fn last_line(&self) -> isize { self.last_line }
+    fn set_last_line(&mut self, line: isize) { self.last_line = line }
+}
+
 pub enum Expr {
     True,
     False,
@@ -8,29 +31,29 @@ pub enum Expr {
     Ident(String),
 
     /// AttrGet(Object, Key)
-    AttrGet(Box<Expr>, Box<Expr>),
+    AttrGet(Box<ExprNode>, Box<ExprNode>),
     Table(Vec<Field>),
     FuncCall(Box<FuncCall>),
 
     /// LogicalOp(Operator, Lhs, Rhs)
-    LogicalOp(String, Box<Expr>, Box<Expr>),
+    LogicalOp(String, Box<ExprNode>, Box<ExprNode>),
 
     /// StringConcatOp(Lhs, Rhs)
-    StringConcatOp(Box<Expr>, Box<Expr>),
+    StringConcatOp(Box<ExprNode>, Box<ExprNode>),
 
     /// ArithmeticOp(Operator, Lhs, Rhs)
-    ArithmeticOp(String, Box<Expr>, Box<Expr>),
-    UnaryMinusOp(Box<Expr>),
-    UnaryNotOp(Box<Expr>),
-    UnaryLenOp(Box<Expr>),
+    ArithmeticOp(String, Box<ExprNode>, Box<ExprNode>),
+    UnaryMinusOp(Box<ExprNode>),
+    UnaryNotOp(Box<ExprNode>),
+    UnaryLenOp(Box<ExprNode>),
 
     /// Function(ParList, Stmts)
-    Function(Vec<ParList>, Vec<Stmt>),
+    Function(Vec<ParList>, Vec<StmtNode>),
 }
 
 pub struct Field {
-    key: Expr,
-    value: Expr,
+    key: ExprNode,
+    value: ExprNode,
 }
 
 pub struct ParList {
@@ -39,79 +62,45 @@ pub struct ParList {
 }
 
 pub struct FuncName {
-    func: Expr,
-    receiver: Expr,
+    func: ExprNode,
+    receiver: ExprNode,
     method: String,
 }
 
 pub struct FuncCall {
-    func: Expr,
-    receiver: Expr,
+    func: ExprNode,
+    receiver: ExprNode,
     method: String,
-    args: Vec<Expr>,
+    args: Vec<ExprNode>,
     adjust_ret: bool,
-}
-
-pub struct ExprNode {
-    position: Position,
-    expr: Expr,
 }
 
 pub enum Stmt {
     /// Assign(Lhs, Rhs)
-    Assign(Vec<Expr>, Vec<Expr>),
+    Assign(Vec<ExprNode>, Vec<ExprNode>),
 
     /// LocalAssign(Names, Exprs)
-    LocalAssign(Vec<String>, Vec<Expr>),
-    FuncCall(Expr),
-    DoBlock(Vec<Stmt>),
+    LocalAssign(Vec<String>, Vec<ExprNode>),
+    FuncCall(ExprNode),
+    DoBlock(Vec<StmtNode>),
 
     /// While(Condition, Stmts)
-    While(Expr, Vec<Stmt>),
+    While(ExprNode, Vec<StmtNode>),
 
     /// If(Condition, Then, Else)
-    If(Expr, Vec<Stmt>, Vec<Stmt>),
+    If(ExprNode, Vec<StmtNode>, Vec<StmtNode>),
 
     /// NumberFor(Name, Init, Limit, Step, Stmts)
-    NumberFor(String, Expr, Expr, Expr, Vec<Stmt>),
+    NumberFor(String, ExprNode, ExprNode, ExprNode, Vec<StmtNode>),
 
     /// GenericFor(Names, Exprs, Stmts)
-    GenericFor(Vec<String>, Vec<Expr>, Vec<Stmt>),
+    GenericFor(Vec<String>, Vec<ExprNode>, Vec<StmtNode>),
 
     /// FuncDef(Name, Func)
-    FuncDef(Box<FuncName>, Expr),
-    Return(Vec<Expr>),
+    FuncDef(Box<FuncName>, ExprNode),
+    Return(Vec<ExprNode>),
     Break,
 }
 
-pub struct StmtNode {
-    position: Position,
-    stmt: Stmt,
-}
-
-/// Node represents a node in abstract syntax tree
-pub trait Node {
-    fn line(&self) -> isize;
-    fn set_line(&mut self, line: isize);
-    fn last_line(&self) -> isize;
-    fn set_last_line(&mut self, line: isize);
-}
-
-pub struct Position {
-    line: isize,
-    last_line: isize,
-}
-
-impl Node for ExprNode {
-    fn line(&self) -> isize { self.position.line }
-    fn set_line(&mut self, line: isize) { self.position.line = line }
-    fn last_line(&self) -> isize { self.position.last_line }
-    fn set_last_line(&mut self, line: isize) { self.position.last_line = line }
-}
-
-impl Node for StmtNode {
-    fn line(&self) -> isize { self.position.line }
-    fn set_line(&mut self, line: isize) { self.position.line = line }
-    fn last_line(&self) -> isize { self.position.last_line }
-    fn set_last_line(&mut self, line: isize) { self.position.last_line = line }
-}
+type StmtNode = Node<Stmt>;
+type ExprNode = Node<Expr>;
