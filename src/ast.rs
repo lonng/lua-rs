@@ -1,8 +1,8 @@
 
 /// Node represents a node in abstract syntax tree
 pub struct Node<T> {
-    line: isize,
-    last_line: isize,
+    line: i32,
+    last_line: i32,
     inner: T,
 }
 
@@ -15,10 +15,10 @@ impl<T> Node<T> {
         }
     }
 
-    fn line(&self) -> isize { self.line }
-    fn set_line(&mut self, line: isize) { self.line = line }
-    fn last_line(&self) -> isize { self.last_line }
-    fn set_last_line(&mut self, line: isize) { self.last_line = line }
+    fn line(&self) -> i32 { self.line }
+    fn set_line(&mut self, line: i32) { self.line = line }
+    fn last_line(&self) -> i32 { self.last_line }
+    fn set_last_line(&mut self, line: i32) { self.last_line = line }
 }
 
 pub enum Expr {
