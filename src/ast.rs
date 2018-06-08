@@ -1,4 +1,3 @@
-
 /// Node represents a node in abstract syntax tree
 #[derive(Debug)]
 pub struct Node<T> {
@@ -44,7 +43,7 @@ pub enum BinaryOpr {
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub enum UnaryOpr{
+pub enum UnaryOpr {
     Minus,
     Not,
     Length,
@@ -58,7 +57,7 @@ pub enum Expr {
     Nil,
     Number(f64),
     String(String),
-    Comma3,
+    Dots,
     Ident(String),
 
     /// AttrGet(Object, Key)
@@ -78,8 +77,12 @@ pub enum Expr {
 
 #[derive(Debug)]
 pub struct Field {
-    key: ExprNode,
-    value: ExprNode,
+    key: Option<ExprNode>,
+    val: ExprNode,
+}
+
+impl Field {
+    pub fn new(key: Option<ExprNode>, val: ExprNode) -> Field { Field { key, val } }
 }
 
 #[derive(Debug)]

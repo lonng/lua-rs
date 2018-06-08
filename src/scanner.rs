@@ -21,7 +21,6 @@ pub enum Token {
     False,
     For,
     Function,
-    Goto,
     If,
     In,
     Local,
@@ -66,7 +65,6 @@ impl ToString for Token {
                     Token::False => "false",
                     Token::For => "for",
                     Token::Function => "function",
-                    Token::Goto => "goto",
                     Token::If => "if",
                     Token::In => "in",
                     Token::Local => "local",
@@ -368,7 +366,7 @@ impl<R: Read> Scanner<R> {
                 }
             }
         }
-        Ok(String::new())
+        unreachable!()
     }
 
     fn read_string(&mut self) -> Result<Token> {
@@ -630,7 +628,7 @@ impl<R: Read> Scanner<R> {
     /// ```
     /// /* terminal symbols denoted by reserved words */
     /// "and", "break", "do", "else", "elseif",
-    /// "end", "false", "for", "function", "goto", "if",
+    /// "end", "false", "for", "function", "if",
     /// "in", "local", "nil", "not", "or", "repeat",
     /// "return", "then", "true", "until", "while",
     /// /* other terminal symbols */
@@ -651,7 +649,6 @@ impl<R: Read> Scanner<R> {
             "false" => Token::False,
             "for" => Token::For,
             "function" => Token::Function,
-            "goto" => Token::Goto,
             "if" => Token::If,
             "in" => Token::In,
             "local" => Token::Local,

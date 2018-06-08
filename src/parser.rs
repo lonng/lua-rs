@@ -1,10 +1,10 @@
+use ::{Error, NO_JUMP, Result};
+use ast::*;
 use scanner::{Scanner, Token};
 use state::State;
 use std::io::{BufReader, Read};
-use vm::Chunk;
-use ::{Result, Error, NO_JUMP};
 use std::mem;
-use ast::{Expr, Stmt, ExprNode, StmtNode, UnaryOpr, BinaryOpr};
+use vm::Chunk;
 
 static BINARY_PRIORITY: &'static [(u8, u8)/*(left, right)*/; 15] = &[
     (6, 6), (6, 6), (7, 7), (7, 7), (7, 7), // `+' `-' `*' `/' `%'
@@ -163,10 +163,54 @@ impl<R: Read> Parser<R> {
                 self.next()?;
                 self.retstat()?
             }
-            Token::Break | Token::Goto => self.gotostat()?,
+            Token::Break => self.gotostat()?,
             _ => self.exprstat()?
         };
         Ok(stmt)
+    }
+
+    fn field(&mut self) -> Result<Field> {
+        let field = match self.token {
+            Token::Char('[') => {
+                self.next()?;
+                let key = self.expression()?;
+                self.check_next(Token::Char(']'))?;
+                self.check_next(Token::Char('='))?;
+                let val = self.expression()?;
+                Field::new(Some(key), val)
+            }
+            Token::Ident(_) => {
+                let key = self.expression()?;
+                self.check_next(Token::Char('='))?;
+                let val = self.expression()?;
+                Field::new(Some(key), val)
+            }
+            _ => {
+                let val = self.expression()?;
+                Field::new(None, val)
+            }
+        };
+        Ok(field)
+    }
+
+    fn table_ctor(&mut self) -> Result<Expr> {
+        debug_assert!(self.token == Token::Char('c'));
+        let mut fields: Vec<Field> = vec![];
+        self.next()?;
+        loop {
+            if let Token::Char('}') = self.token {
+                break
+            }
+            let field = self.field()?;
+            fields.push(field);
+            match self.token {
+                Token::Char(',') | Token::Char(';') => self.next()?,
+                _ => {}
+            }
+        }
+        let line = self.line_number;
+        self.check_match(Token::Char('{'), Token::Char('}'), line)?;
+        Ok(Expr::Table(fields))
     }
 
     fn simple_expr(&mut self) -> Result<ExprNode> {
@@ -176,8 +220,10 @@ impl<R: Read> Parser<R> {
             Token::False => Expr::False,
             Token::Nil => Expr::Nil,
             Token::Number(n) => Expr::Number(n),
+            Token::Dots => Expr::Dots,
             Token::String(ref s) => Expr::String(s.clone()),
             Token::Ident(ref s) => Expr::Ident(s.clone()),
+            Token::Char(c) if c == '{' => self.table_ctor()?,
             _ => unimplemented!()
         };
         self.next()?;
@@ -226,22 +272,29 @@ impl<R: Read> Parser<R> {
 
     fn expression(&mut self) -> Result<ExprNode> { Ok(self.sub_expression(0)?.0) }
 
-    fn test_then_block(&mut self, escapes: isize) -> Result<isize> {
+    fn test_then_block(&mut self) -> Result<Stmt> {
         let mut jump_false = 0;
         self.next()?;
-        let mut expr = self.expression()?;
+        let mut condition = self.expression()?;
         self.check_next(Token::Then)?;
-        Ok(escapes)
+        let then = if self.token == Token::Break {
+            vec![StmtNode::new(Stmt::Break)]
+        } else {
+            self.statement_list()?;
+        };
+        Stmt::If(condition, then, vec![])
     }
 
     /// ifstat -> IF cond THEN block {ELSEIF cond THEN block} [ELSE block] END
     fn ifstat(&mut self, line: i32) -> Result<StmtNode> {
-        let mut escapes = self.test_then_block(NO_JUMP)?;
+        debug_assert!(self.token == Token::If);
+        let Stmt::If(confition, then, mut elif) = self.test_then_block()?;
         loop {
             if self.token != Token::Elseif {
                 break;
             }
-            escapes = self.test_then_block(escapes)?;
+            let elseif = self.test_then_block()?;
+            elif.push(StmtNode::new(elseif));
         }
         if self.testnext(&Token::Else)? {
             self.block()?;
