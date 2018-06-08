@@ -6,12 +6,13 @@ fn main() {
     let mut state = State::new();
     let result = state.load_string(r"
         if hello and hello1 or hello2 and hello3 then
-            {
+            if {
                 a = b,
                 c = d;
                 [e] = f,
                 ['x'] = x,
-            }
+            } then
+            end
         elseif world then
         else
         end

@@ -194,7 +194,7 @@ impl<R: Read> Parser<R> {
     }
 
     fn table_ctor(&mut self) -> Result<Expr> {
-        debug_assert!(self.token == Token::Char('c'));
+        debug_assert!(self.token == Token::Char('{'));
         let mut fields: Vec<Field> = vec![];
         self.next()?;
         loop {
@@ -209,7 +209,8 @@ impl<R: Read> Parser<R> {
             }
         }
         let line = self.line_number;
-        self.check_match(Token::Char('{'), Token::Char('}'), line)?;
+        self.check_match(Token::Char('}'), Token::Char('{'), line)?;
+        //println!("table_ctor => {:#?}", fields);
         Ok(Expr::Table(fields))
     }
 
@@ -232,7 +233,7 @@ impl<R: Read> Parser<R> {
         node.set_line(line);
         node.set_last_line(self.line_number);
 
-        println!("simple_expr => {:#?}", node);
+        //println!("simple_expr => {:#?}", node);
 
         Ok(node)
     }
@@ -280,26 +281,30 @@ impl<R: Read> Parser<R> {
         let then = if self.token == Token::Break {
             vec![StmtNode::new(Stmt::Break)]
         } else {
-            self.statement_list()?;
+            self.statement_list()?
         };
-        Stmt::If(condition, then, vec![])
+        println!("test_then_block => {:#?}", then);
+        Ok(Stmt::If(condition, then, vec![]))
     }
 
     /// ifstat -> IF cond THEN block {ELSEIF cond THEN block} [ELSE block] END
     fn ifstat(&mut self, line: i32) -> Result<StmtNode> {
         debug_assert!(self.token == Token::If);
-        let Stmt::If(confition, then, mut elif) = self.test_then_block()?;
-        loop {
-            if self.token != Token::Elseif {
-                break;
+        if let Stmt::If(confition, then, mut elif) = self.test_then_block()? {
+            loop {
+                if self.token != Token::Elseif {
+                    break;
+                }
+                let elseif = self.test_then_block()?;
+                elif.push(StmtNode::new(elseif));
             }
-            let elseif = self.test_then_block()?;
-            elif.push(StmtNode::new(elseif));
+            if self.testnext(&Token::Else)? {
+                self.block()?;
+            }
+            self.check_match(Token::End, Token::If, line)?;
+        } else {
+            unreachable!()
         }
-        if self.testnext(&Token::Else)? {
-            self.block()?;
-        }
-        self.check_match(Token::End, Token::If, line)?;
         unimplemented!()
     }
 
