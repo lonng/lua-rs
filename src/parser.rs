@@ -70,7 +70,7 @@ impl<R: Read> Parser<R> {
     pub fn parse(&mut self) -> Result<Box<Chunk>> {
         self.next()?;
         let stmts = self.statement_list()?;
-        println!("Stmts => {:?}", stmts);
+        println!("Stmts => {:#?}", stmts);
         self.check(Token::EOF)?;
         Ok(Chunk::new())
     }
@@ -140,9 +140,9 @@ impl<R: Read> Parser<R> {
             Token::While => self.whilestat(line)?,
             Token::Do => {
                 self.next()?;
-                let stmt = self.block()?;
+                let stmts = self.block()?;
                 self.check_match(Token::End, Token::Do, line)?;
-                stmt
+                StmtNode::new(Stmt::DoBlock(stmts))
             }
             Token::For => self.forstat(line)?,
             Token::Repeat => self.repeatstat(line)?,
@@ -209,8 +209,7 @@ impl<R: Read> Parser<R> {
             }
         }
         let line = self.line_number;
-        self.check_match(Token::Char('}'), Token::Char('{'), line)?;
-        //println!("table_ctor => {:#?}", fields);
+        self.check(Token::Char('}'))?;
         Ok(Expr::Table(fields))
     }
 
@@ -273,7 +272,7 @@ impl<R: Read> Parser<R> {
 
     fn expression(&mut self) -> Result<ExprNode> { Ok(self.sub_expression(0)?.0) }
 
-    fn test_then_block(&mut self) -> Result<Stmt> {
+    fn test_then_block(&mut self) -> Result<IfThenElse> {
         let mut jump_false = 0;
         self.next()?;
         let mut condition = self.expression()?;
@@ -283,29 +282,35 @@ impl<R: Read> Parser<R> {
         } else {
             self.statement_list()?
         };
-        println!("test_then_block => {:#?}", then);
-        Ok(Stmt::If(condition, then, vec![]))
+        Ok(IfThenElse::new(condition, then, vec![]))
     }
 
     /// ifstat -> IF cond THEN block {ELSEIF cond THEN block} [ELSE block] END
     fn ifstat(&mut self, line: i32) -> Result<StmtNode> {
         debug_assert!(self.token == Token::If);
-        if let Stmt::If(confition, then, mut elif) = self.test_then_block()? {
-            loop {
-                if self.token != Token::Elseif {
-                    break;
-                }
-                let elseif = self.test_then_block()?;
-                elif.push(StmtNode::new(elseif));
-            }
-            if self.testnext(&Token::Else)? {
-                self.block()?;
-            }
-            self.check_match(Token::End, Token::If, line)?;
-        } else {
-            unreachable!()
+        let mut ifthen = self.test_then_block()?;
+        let mut elseifs: Vec<IfThenElse> = vec![];
+        while self.token == Token::Elseif {
+            let mut elseif = self.test_then_block()?;
+            elseifs.push(elseif);
         }
-        unimplemented!()
+
+        let mut els = if self.testnext(&Token::Else)? {
+            self.block()?
+        } else {
+            vec![]
+        };
+
+        // link all elseif
+        for mut elseif in elseifs.into_iter().rev().into_iter() {
+            let mut e: Vec<Node<Stmt>> = vec![];
+            mem::swap(&mut e, &mut els);
+            elseif.set_els(e);
+            els.push(StmtNode::new(Stmt::If(elseif)));
+        }
+        self.check_match(Token::End, Token::If, line)?;
+        ifthen.set_els(els);
+        Ok(StmtNode::new(Stmt::If(ifthen)))
     }
 
     fn whilestat(&mut self, line: i32) -> Result<StmtNode> { unimplemented!() }
@@ -324,7 +329,7 @@ impl<R: Read> Parser<R> {
         unimplemented!();
     }
 
-    fn block(&mut self) -> Result<StmtNode> { unimplemented!() }
+    fn block(&mut self) -> Result<Vec<StmtNode>> { self.statement_list() }
 
     fn check_next(&mut self, expect: Token) -> Result<()> {
         self.check(expect)?;

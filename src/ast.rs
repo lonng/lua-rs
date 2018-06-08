@@ -87,7 +87,7 @@ impl Field {
 
 #[derive(Debug)]
 pub struct ParList {
-    has_vargs: bool,
+    vargs: bool,
     names: Vec<String>,
 }
 
@@ -108,6 +108,27 @@ pub struct FuncCall {
 }
 
 #[derive(Debug)]
+pub struct IfThenElse {
+    condition: ExprNode,
+    then: Vec<StmtNode>,
+    els: Vec<StmtNode>,
+}
+
+impl IfThenElse {
+    pub fn new(condition: ExprNode, then: Vec<StmtNode>, els: Vec<StmtNode>) -> IfThenElse {
+        IfThenElse {
+            condition,
+            then,
+            els,
+        }
+    }
+
+    pub fn set_els(&mut self, els: Vec<StmtNode>) {
+        self.els = els;
+    }
+}
+
+#[derive(Debug)]
 pub enum Stmt {
     /// Assign(Lhs, Rhs)
     Assign(Vec<ExprNode>, Vec<ExprNode>),
@@ -121,7 +142,7 @@ pub enum Stmt {
     While(ExprNode, Vec<StmtNode>),
 
     /// If(Condition, Then, Else)
-    If(ExprNode, Vec<StmtNode>, Vec<StmtNode>),
+    If(IfThenElse),
 
     /// NumberFor(Name, Init, Limit, Step, Stmts)
     NumberFor(String, ExprNode, ExprNode, ExprNode, Vec<StmtNode>),

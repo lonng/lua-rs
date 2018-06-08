@@ -14,7 +14,16 @@ fn main() {
             } then
             end
         elseif world then
+        elseif world2 then
+        elseif world3 then
         else
+            if {
+                a = b,
+                c = d;
+                [e] = f,
+                ['x'] = x,
+            } then
+            end
         end
     ");
     //let result = state.load_file("lua-tests/api.lua");
