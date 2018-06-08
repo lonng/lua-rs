@@ -2,65 +2,9 @@ use scanner::{Scanner, Token};
 use state::State;
 use std::io::{BufReader, Read};
 use vm::Chunk;
-use code::{Kind, Function, ExprDesc};
 use ::{Result, Error, NO_JUMP};
 use std::mem;
-
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub enum Opr {
-    /*binary*/
-    Add = 0,
-    Sub,
-    Mul,
-    Div,
-    Mod,
-    Pow,
-    Concat,
-    Eq,
-    LT,
-    LE,
-    NE,
-    GT,
-    GE,
-    And,
-    Or,
-    NoBinary,
-    /*unary*/
-    Minus,
-    Not,
-    Length,
-    NoUnary,
-}
-
-fn unary_op(t: &Token) -> Opr {
-    match *t {
-        Token::Not => Opr::Not,
-        Token::Char(c) if c == '-' => Opr::Minus,
-        Token::Char(c) if c == '#' => Opr::Length,
-        _ => Opr::NoUnary
-    }
-}
-
-fn binary_op(t: &Token) -> Opr {
-    match *t {
-        Token::Char(c) if c == '+' => Opr::Add,
-        Token::Char(c) if c == '-' => Opr::Sub,
-        Token::Char(c) if c == '*' => Opr::Mul,
-        Token::Char(c) if c == '/' => Opr::Div,
-        Token::Char(c) if c == '%' => Opr::Mod,
-        Token::Char(c) if c == '^' => Opr::Pow,
-        Token::Concat => Opr::Concat,
-        Token::NE => Opr::NE,
-        Token::Eq => Opr::Eq,
-        Token::Char(c) if c == '<' => Opr::LT,
-        Token::LE => Opr::LE,
-        Token::Char(c) if c == '>' => Opr::GT,
-        Token::GE => Opr::GE,
-        Token::And => Opr::And,
-        Token::Or => Opr::Or,
-        _ => Opr::NoBinary,
-    }
-}
+use ast::{Expr, Stmt, ExprNode, StmtNode, UnaryOpr, BinaryOpr};
 
 static BINARY_PRIORITY: &'static [(u8, u8)/*(left, right)*/; 15] = &[
     (6, 6), (6, 6), (7, 7), (7, 7), (7, 7), // `+' `-' `*' `/' `%'
@@ -71,6 +15,37 @@ static BINARY_PRIORITY: &'static [(u8, u8)/*(left, right)*/; 15] = &[
 ];
 
 const UNARY_PRIORITY: u8 = 8;
+
+
+pub fn unary_op(t: &Token) -> UnaryOpr {
+    match *t {
+        Token::Not => UnaryOpr::Not,
+        Token::Char(c) if c == '-' => UnaryOpr::Minus,
+        Token::Char(c) if c == '#' => UnaryOpr::Length,
+        _ => UnaryOpr::NoUnary
+    }
+}
+
+pub fn binary_op(t: &Token) -> BinaryOpr {
+    match *t {
+        Token::Char(c) if c == '+' => BinaryOpr::Add,
+        Token::Char(c) if c == '-' => BinaryOpr::Sub,
+        Token::Char(c) if c == '*' => BinaryOpr::Mul,
+        Token::Char(c) if c == '/' => BinaryOpr::Div,
+        Token::Char(c) if c == '%' => BinaryOpr::Mod,
+        Token::Char(c) if c == '^' => BinaryOpr::Pow,
+        Token::Concat => BinaryOpr::Concat,
+        Token::NE => BinaryOpr::NE,
+        Token::Eq => BinaryOpr::Eq,
+        Token::Char(c) if c == '<' => BinaryOpr::LT,
+        Token::LE => BinaryOpr::LE,
+        Token::Char(c) if c == '>' => BinaryOpr::GT,
+        Token::GE => BinaryOpr::GE,
+        Token::And => BinaryOpr::And,
+        Token::Or => BinaryOpr::Or,
+        _ => BinaryOpr::NoBinary,
+    }
+}
 
 #[derive(Debug)]
 pub struct Parser<R> {
@@ -93,9 +68,9 @@ impl<R: Read> Parser<R> {
     }
 
     pub fn parse(&mut self) -> Result<Box<Chunk>> {
-        // main function
         self.next()?;
-        self.statement_list()?;
+        let stmts = self.statement_list()?;
+        println!("Stmts => {:?}", stmts);
         self.check(Token::EOF)?;
         Ok(Chunk::new())
     }
@@ -128,18 +103,19 @@ impl<R: Read> Parser<R> {
         }
     }
 
-    fn statement_list(&mut self) -> Result<()> {
+    fn statement_list(&mut self) -> Result<Vec<StmtNode>> {
+        let mut stmts: Vec<StmtNode> = vec![];
         loop {
             if self.block_follow(true) {
                 break;
             }
 
-            self.statement()?;
+            stmts.push(self.statement()?);
             if self.token == Token::Return {
                 break;
             }
         }
-        return Ok(());
+        return Ok(stmts);
     }
 
     fn testnext(&mut self, t: &Token) -> Result<bool> {
@@ -150,16 +126,23 @@ impl<R: Read> Parser<R> {
         Ok(false)
     }
 
-    fn statement(&mut self) -> Result<()> {
+    fn statement(&mut self) -> Result<StmtNode> {
+        loop {
+            match self.token {
+                Token::Char(char) if char == ';' => self.next()?,
+                _ => break
+            }
+        }
         let line = self.line_number;
         // is not last statement
-        match self.token {
+        let stmt = match self.token {
             Token::If => self.ifstat(line)?,
             Token::While => self.whilestat(line)?,
             Token::Do => {
                 self.next()?;
-                self.block()?;
-                self.check_match(Token::End, Token::Do, line)?
+                let stmt = self.block()?;
+                self.check_match(Token::End, Token::Do, line)?;
+                stmt
             }
             Token::For => self.forstat(line)?,
             Token::Repeat => self.repeatstat(line)?,
@@ -167,77 +150,92 @@ impl<R: Read> Parser<R> {
             Token::Local => {
                 self.next()?;
                 if self.testnext(&Token::Function)? {
-                    self.localfunc()?;
+                    self.localfunc()?
                 } else {
-                    self.localstat()?;
+                    self.localstat()?
                 }
             }
             Token::DoubleColon => {
                 self.next()?;
-                self.lebalstat()?;
+                self.lebalstat()?
             }
             Token::Return => {
                 self.next()?;
-                self.retstat()?;
+                self.retstat()?
             }
             Token::Break | Token::Goto => self.gotostat()?,
-            Token::Char(char) if char == ';' => self.next()?,
             _ => self.exprstat()?
-        }
-        // TODO: assert
-        //self.function.free_register_count  = self.function.active_var_count;
-        Ok(())
+        };
+        Ok(stmt)
     }
 
-    fn simple_expr(&mut self) -> Result<ExprDesc> {
+    fn simple_expr(&mut self) -> Result<ExprNode> {
+        let line = self.line_number;
         let e = match self.token {
+            Token::True => Expr::True,
+            Token::False => Expr::False,
+            Token::Nil => Expr::Nil,
+            Token::Number(n) => Expr::Number(n),
+            Token::String(ref s) => Expr::String(s.clone()),
+            Token::Ident(ref s) => Expr::Ident(s.clone()),
             _ => unimplemented!()
         };
         self.next()?;
-        Ok(e)
+
+        let mut node = ExprNode::new(e);
+        node.set_line(line);
+        node.set_last_line(self.line_number);
+
+        println!("simple_expr => {:#?}", node);
+
+        Ok(node)
     }
 
-    fn sub_expression(&mut self, limit: u8) -> Result<(ExprDesc, Opr)> {
+    fn sub_expression(&mut self, limit: u8) -> Result<(ExprNode, BinaryOpr)> {
         let op = unary_op(&self.token);
-        let mut expr = if op != Opr::NoUnary {
+        let mut expr = if op != UnaryOpr::NoUnary {
             let line = self.line_number;
             self.next()?;
             let sub = self.sub_expression(UNARY_PRIORITY)?.0;
-            unimplemented!()
+            let mut node = ExprNode::new(Expr::UnaryOp(op, Box::new(sub)));
+            node.set_line(line);
+            node.set_last_line(self.line_number);
+            node
         } else {
             self.simple_expr()?
         };
 
         let mut op = binary_op(&self.token);
         loop {
-            if op == Opr::NoBinary || BINARY_PRIORITY[op as usize].1 <= limit {
+            if op == BinaryOpr::NoBinary || BINARY_PRIORITY[op as usize].1 <= limit {
                 break;
             }
-            let line = self.line_number;
             self.next()?;
+            let line = self.line_number;
             let sub = self.sub_expression(BINARY_PRIORITY[op as usize].0)?;
-            op = sub.1
+            let mut node = ExprNode::new(Expr::BinaryOp(op, Box::new(expr), Box::new(sub.0)));
+            node.set_line(line);
+            node.set_last_line(self.line_number);
+
+            expr = node;
+            op = sub.1;
         }
+
         Ok((expr, op))
     }
 
-    fn expression(&mut self) -> Result<ExprDesc> {
-        let r = self.sub_expression(0)?;
-        Ok(r.0)
-    }
+    fn expression(&mut self) -> Result<ExprNode> { Ok(self.sub_expression(0)?.0) }
 
     fn test_then_block(&mut self, escapes: isize) -> Result<isize> {
         let mut jump_false = 0;
         self.next()?;
-        let mut e = self.expression()?;
+        let mut expr = self.expression()?;
         self.check_next(Token::Then)?;
-
-
         Ok(escapes)
     }
 
     /// ifstat -> IF cond THEN block {ELSEIF cond THEN block} [ELSE block] END
-    fn ifstat(&mut self, line: i32) -> Result<()> {
+    fn ifstat(&mut self, line: i32) -> Result<StmtNode> {
         let mut escapes = self.test_then_block(NO_JUMP)?;
         loop {
             if self.token != Token::Elseif {
@@ -249,28 +247,26 @@ impl<R: Read> Parser<R> {
             self.block()?;
         }
         self.check_match(Token::End, Token::If, line)?;
-        Ok(())
+        unimplemented!()
     }
 
-    fn whilestat(&mut self, line: i32) -> Result<()> { unimplemented!() }
-    fn forstat(&mut self, line: i32) -> Result<()> { unimplemented!() }
-    fn repeatstat(&mut self, line: i32) -> Result<()> { unimplemented!() }
-    fn funcstat(&mut self, line: i32) -> Result<()> { unimplemented!() }
-    fn localfunc(&mut self) -> Result<()> { unimplemented!() }
-    fn localstat(&mut self) -> Result<()> { unimplemented!() }
-    fn exprstat(&mut self) -> Result<()> { unimplemented!() }
-    fn lebalstat(&mut self) -> Result<()> { unimplemented!() }
-    fn gotostat(&mut self) -> Result<()> {
+    fn whilestat(&mut self, line: i32) -> Result<StmtNode> { unimplemented!() }
+    fn forstat(&mut self, line: i32) -> Result<StmtNode> { unimplemented!() }
+    fn repeatstat(&mut self, line: i32) -> Result<StmtNode> { unimplemented!() }
+    fn funcstat(&mut self, line: i32) -> Result<StmtNode> { unimplemented!() }
+    fn localfunc(&mut self) -> Result<StmtNode> { unimplemented!() }
+    fn localstat(&mut self) -> Result<StmtNode> { unimplemented!() }
+    fn exprstat(&mut self) -> Result<StmtNode> { unimplemented!() }
+    fn lebalstat(&mut self) -> Result<StmtNode> { unimplemented!() }
+    fn gotostat(&mut self) -> Result<StmtNode> {
         unimplemented!();
-        Ok(())
     }
 
-    fn retstat(&mut self) -> Result<()> {
+    fn retstat(&mut self) -> Result<StmtNode> {
         unimplemented!();
-        Ok(())
     }
 
-    fn block(&mut self) -> Result<()> { unimplemented!() }
+    fn block(&mut self) -> Result<StmtNode> { unimplemented!() }
 
     fn check_next(&mut self, expect: Token) -> Result<()> {
         self.check(expect)?;

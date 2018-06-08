@@ -43,7 +43,7 @@ pub enum Token {
     DoubleColon,
     EOF,
     Number(f64),
-    Name(String),
+    Ident(String),
     String(String),
     Char(char),
 }
@@ -52,7 +52,7 @@ impl ToString for Token {
     fn to_string(&self) -> String {
         match *self {
             Token::Number(ff) => format!("{}", ff),
-            Token::Name(ref s) => s.clone(),
+            Token::Ident(ref s) => s.clone(),
             Token::String(ref s) => s.clone(),
             Token::Char(ref c) => c.to_string(),
             _ => {
@@ -664,7 +664,7 @@ impl<R: Read> Scanner<R> {
             "true" => Token::True,
             "until" => Token::Until,
             "while" => Token::While,
-            _ => Token::Name(s),
+            _ => Token::Ident(s),
         };
 
         self.buffer.clear();

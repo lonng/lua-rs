@@ -1,5 +1,6 @@
 
 /// Node represents a node in abstract syntax tree
+#[derive(Debug)]
 pub struct Node<T> {
     line: i32,
     last_line: i32,
@@ -15,12 +16,42 @@ impl<T> Node<T> {
         }
     }
 
-    fn line(&self) -> i32 { self.line }
-    fn set_line(&mut self, line: i32) { self.line = line }
-    fn last_line(&self) -> i32 { self.last_line }
-    fn set_last_line(&mut self, line: i32) { self.last_line = line }
+    pub fn line(&self) -> i32 { self.line }
+    pub fn set_line(&mut self, line: i32) { self.line = line }
+    pub fn last_line(&self) -> i32 { self.last_line }
+    pub fn set_last_line(&mut self, line: i32) { self.last_line = line }
 }
 
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum BinaryOpr {
+    Add = 0,
+    Sub,
+    Mul,
+    Div,
+    Mod,
+    Pow,
+    Concat,
+    Eq,
+    LT,
+    LE,
+    NE,
+    GT,
+    GE,
+    And,
+    Or,
+    NoBinary,
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum UnaryOpr{
+    Minus,
+    Not,
+    Length,
+    NoUnary,
+}
+
+#[derive(Debug)]
 pub enum Expr {
     True,
     False,
@@ -35,38 +66,36 @@ pub enum Expr {
     Table(Vec<Field>),
     FuncCall(Box<FuncCall>),
 
-    /// LogicalOp(Operator, Lhs, Rhs)
-    LogicalOp(String, Box<ExprNode>, Box<ExprNode>),
+    /// BinaryOp(Operator, Lhs, Rhs)
+    BinaryOp(BinaryOpr, Box<ExprNode>, Box<ExprNode>),
 
-    /// StringConcatOp(Lhs, Rhs)
-    StringConcatOp(Box<ExprNode>, Box<ExprNode>),
-
-    /// ArithmeticOp(Operator, Lhs, Rhs)
-    ArithmeticOp(String, Box<ExprNode>, Box<ExprNode>),
-    UnaryMinusOp(Box<ExprNode>),
-    UnaryNotOp(Box<ExprNode>),
-    UnaryLenOp(Box<ExprNode>),
+    /// UnaryOp(Operator, expr)
+    UnaryOp(UnaryOpr, Box<ExprNode>),
 
     /// Function(ParList, Stmts)
     Function(Vec<ParList>, Vec<StmtNode>),
 }
 
+#[derive(Debug)]
 pub struct Field {
     key: ExprNode,
     value: ExprNode,
 }
 
+#[derive(Debug)]
 pub struct ParList {
     has_vargs: bool,
     names: Vec<String>,
 }
 
+#[derive(Debug)]
 pub struct FuncName {
     func: ExprNode,
     receiver: ExprNode,
     method: String,
 }
 
+#[derive(Debug)]
 pub struct FuncCall {
     func: ExprNode,
     receiver: ExprNode,
@@ -75,6 +104,7 @@ pub struct FuncCall {
     adjust_ret: bool,
 }
 
+#[derive(Debug)]
 pub enum Stmt {
     /// Assign(Lhs, Rhs)
     Assign(Vec<ExprNode>, Vec<ExprNode>),
@@ -102,5 +132,5 @@ pub enum Stmt {
     Break,
 }
 
-type StmtNode = Node<Stmt>;
-type ExprNode = Node<Expr>;
+pub type StmtNode = Node<Stmt>;
+pub type ExprNode = Node<Expr>;
