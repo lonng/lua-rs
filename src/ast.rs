@@ -72,7 +72,7 @@ pub enum Expr {
     UnaryOp(UnaryOpr, Box<ExprNode>),
 
     /// Function(ParList, Stmts)
-    Function(Vec<ParList>, Vec<StmtNode>),
+    Function(ParList, Vec<StmtNode>),
 }
 
 #[derive(Debug)]
@@ -89,6 +89,27 @@ impl Field {
 pub struct ParList {
     vargs: bool,
     names: Vec<String>,
+}
+
+impl ParList {
+    pub fn new() -> ParList {
+        ParList {
+            vargs: false,
+            names: Vec::new(),
+        }
+    }
+
+    pub fn set_vargs(&mut self, vargs: bool) {
+        self.vargs = vargs;
+    }
+
+    pub fn set_names(&mut self, names: Vec<String>) {
+        self.names = names;
+    }
+
+    pub fn push_param(&mut self, param: String) {
+        self.names.push(param)
+    }
 }
 
 #[derive(Debug)]

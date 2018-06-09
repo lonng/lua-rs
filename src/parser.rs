@@ -69,7 +69,7 @@ impl<R: Read> Parser<R> {
 
     pub fn parse(&mut self) -> Result<Box<Chunk>> {
         self.next()?;
-        let stmts = self.statement_list()?;
+        let stmts = self.block()?;
         println!("Stmts => {:#?}", stmts);
         self.check(Token::EOF)?;
         Ok(Chunk::new())
@@ -103,7 +103,7 @@ impl<R: Read> Parser<R> {
         }
     }
 
-    fn statement_list(&mut self) -> Result<Vec<StmtNode>> {
+    fn block(&mut self) -> Result<Vec<StmtNode>> {
         let mut stmts: Vec<StmtNode> = vec![];
         loop {
             if self.block_follow(true) {
@@ -155,15 +155,11 @@ impl<R: Read> Parser<R> {
                     self.localstat()?
                 }
             }
-            Token::DoubleColon => {
-                self.next()?;
-                self.lebalstat()?
-            }
             Token::Return => {
                 self.next()?;
                 self.retstat()?
             }
-            Token::Break => self.gotostat()?,
+            Token::Break => self.breakstat()?,
             _ => self.exprstat()?
         };
         Ok(stmt)
@@ -197,10 +193,7 @@ impl<R: Read> Parser<R> {
         debug_assert!(self.token == Token::Char('{'));
         let mut fields: Vec<Field> = vec![];
         self.next()?;
-        loop {
-            if let Token::Char('}') = self.token {
-                break
-            }
+        while self.token != Token::Char('}') {
             let field = self.field()?;
             fields.push(field);
             match self.token {
@@ -211,6 +204,52 @@ impl<R: Read> Parser<R> {
         let line = self.line_number;
         self.check(Token::Char('}'))?;
         Ok(Expr::Table(fields))
+    }
+
+    /// ```BNF
+    /// namelist :: Ident | namelist ',' Ident
+    /// ```
+    fn namelist(&mut self) -> Result<Vec<String>> {
+        let mut names: Vec<String> = vec![];
+        loop {
+            match self.token {
+                Token::Ident(ref name) => names.push(name.clone()),
+                Token::Char(',') => self.unexpected(Token::Char(','))?,
+                _ => break
+            }
+            self.next()?;
+            if Token::Char(',') == self.token {
+                self.next()?;
+            }
+        }
+        Ok(names)
+    }
+
+    fn function(&mut self) -> Result<Expr> {
+        debug_assert!(self.token == Token::Function);
+        self.next()?;
+
+        // paramater list
+        self.check_next(Token::Char('('))?;
+        let mut parlist = ParList::new();
+        if let Token::Ident(_) = self.token {
+            let names = self.namelist()?;
+            parlist.set_names(names);
+        }
+        if Token::Dots == self.token {
+            parlist.set_vargs(true);
+            self.next()?;
+        }
+        self.check_next(Token::Char(')'))?;
+
+        let block = self.block()?;
+        let line = self.line_number;
+        self.check(Token::End)?;
+        Ok(Expr::Function(parlist, block))
+    }
+
+    fn prefixexp(&mut self) -> Result<Expr> {
+        unimplemented!()
     }
 
     fn simple_expr(&mut self) -> Result<ExprNode> {
@@ -224,7 +263,8 @@ impl<R: Read> Parser<R> {
             Token::String(ref s) => Expr::String(s.clone()),
             Token::Ident(ref s) => Expr::Ident(s.clone()),
             Token::Char(c) if c == '{' => self.table_ctor()?,
-            _ => unimplemented!()
+            Token::Function => self.function()?,
+            _ => self.prefixexp()?
         };
         self.next()?;
 
@@ -280,7 +320,7 @@ impl<R: Read> Parser<R> {
         let then = if self.token == Token::Break {
             vec![StmtNode::new(Stmt::Break)]
         } else {
-            self.statement_list()?
+            self.block()?
         };
         Ok(IfThenElse::new(condition, then, vec![]))
     }
@@ -318,18 +358,19 @@ impl<R: Read> Parser<R> {
     fn repeatstat(&mut self, line: i32) -> Result<StmtNode> { unimplemented!() }
     fn funcstat(&mut self, line: i32) -> Result<StmtNode> { unimplemented!() }
     fn localfunc(&mut self) -> Result<StmtNode> { unimplemented!() }
-    fn localstat(&mut self) -> Result<StmtNode> { unimplemented!() }
+
+    fn localstat(&mut self) -> Result<StmtNode> {
+        unimplemented!()
+    }
     fn exprstat(&mut self) -> Result<StmtNode> { unimplemented!() }
     fn lebalstat(&mut self) -> Result<StmtNode> { unimplemented!() }
-    fn gotostat(&mut self) -> Result<StmtNode> {
+    fn breakstat(&mut self) -> Result<StmtNode> {
         unimplemented!();
     }
 
     fn retstat(&mut self) -> Result<StmtNode> {
         unimplemented!();
     }
-
-    fn block(&mut self) -> Result<Vec<StmtNode>> { self.statement_list() }
 
     fn check_next(&mut self, expect: Token) -> Result<()> {
         self.check(expect)?;
@@ -356,5 +397,10 @@ impl<R: Read> Parser<R> {
         } else {
             Ok(())
         }
+    }
+
+    fn unexpected(&mut self, t: Token) -> Result<()> {
+        let err = format!("{}:{}: unexpected: {}", self.source, self.line_number, t.to_string());
+        Err(Error::SyntaxError(err))
     }
 }

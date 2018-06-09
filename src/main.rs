@@ -10,7 +10,7 @@ fn main() {
                 a = b,
                 c = d;
                 [e] = f,
-                ['x'] = x,
+                ['x'] = 'x',
             } then
             end
         elseif world then
@@ -24,6 +24,14 @@ fn main() {
                 ['x'] = x,
             } then
             end
+        end
+
+        do
+            if hello2 then
+            end
+        end
+
+        if function(a, b, c, ...) end then
         end
     ");
     //let result = state.load_file("lua-tests/api.lua");
