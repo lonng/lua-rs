@@ -189,7 +189,7 @@ impl<R: Read> Parser<R> {
         Ok(field)
     }
 
-    fn table_ctor(&mut self) -> Result<Expr> {
+    fn table_ctor(&mut self) -> Result<ExprNode> {
         debug_assert!(self.token == Token::Char('{'));
         let mut fields: Vec<Field> = vec![];
         self.next()?;
@@ -202,8 +202,8 @@ impl<R: Read> Parser<R> {
             }
         }
         let line = self.line_number;
-        self.check(Token::Char('}'))?;
-        Ok(Expr::Table(fields))
+        self.check_next(Token::Char('}'))?;
+        Ok(ExprNode::new(Expr::Table(fields)))
     }
 
     /// ```BNF
@@ -218,14 +218,12 @@ impl<R: Read> Parser<R> {
                 _ => break
             }
             self.next()?;
-            if Token::Char(',') == self.token {
-                self.next()?;
-            }
+            self.testnext(&Token::Char(','))?;
         }
         Ok(names)
     }
 
-    fn function(&mut self) -> Result<Expr> {
+    fn function(&mut self) -> Result<ExprNode> {
         debug_assert!(self.token == Token::Function);
         self.next()?;
 
@@ -244,58 +242,101 @@ impl<R: Read> Parser<R> {
 
         let block = self.block()?;
         let line = self.line_number;
-        self.check(Token::End)?;
-        Ok(Expr::Function(parlist, block))
+        self.check_next(Token::End)?;
+        Ok(ExprNode::new(Expr::Function(parlist, block)))
     }
 
-    fn prefixexp(&mut self) -> Result<Expr> {
-        match self.token {
-            Token::Ident(ref s) => Expr::Ident(s.clone()),
-            Token::Char('(') => {
-
+    /// Prefix expression
+    ///
+    /// ```BNF
+    /// prefixexp -> NAME | '(' expr ')'
+    /// ```
+    fn prefixexp(&mut self) -> Result<ExprNode> {
+        let expr = match self.token {
+            Token::Ident(ref s) => {
+                let expr = ExprNode::new(Expr::Ident(s.clone()));
+                expr
             }
+            Token::Char('(') => {
+                self.next()?;
+                let line = self.line_number;
+                let expr = self.expression()?;
+                self.check(Token::Char(')'))?;
+                expr
+            }
+            _ => return Err(Error::SyntaxError("unexpected symbol".to_string()))
+        };
+        self.next()?;
+        Ok(expr)
+    }
+
+    /// Primary expression
+    ///
+    /// ```BNF
+    /// primaryexp ->
+    /// prefixexp { '.' NAME | '[' exp `]' | ':' NAME funcargs | funcargs }
+    /// ```
+    fn primaryexp(&mut self) -> Result<ExprNode> {
+        let mut expr = self.prefixexp()?;
+        loop {
+            match self.token {
+                Token::Char('.') => {
+                    self.next()?;
+                    if let Token::Ident(ref s) = self.token {
+                        let key = ExprNode::new(Expr::String(s.clone()));
+                        let mut get = Expr::AttrGet(Box::new(expr), Box::new(key));
+                        expr = ExprNode::new(get);
+                    } else {
+                        return Err(Error::SyntaxError(format!("ident expected")));
+                    }
+                    self.next()?;
+                }
+                Token::Char('[') => unimplemented!(),
+                Token::Char(':') => unimplemented!(),
+                Token::Char('(') | Token::String(_) | Token::Char('{') => unimplemented!(),
+                _ => return Ok(expr)
+            };
         }
         unimplemented!()
     }
 
+    /// Simple expression
+    ///
+    /// ```BNF
+    /// simpleexp -> NUMBER | STRING | NIL | true | false | ... |
+    /// constructor | FUNCTION body | primaryexp
+    /// ```
     fn simple_expr(&mut self) -> Result<ExprNode> {
         let line = self.line_number;
-        let e = match self.token {
-            Token::True => Expr::True,
-            Token::False => Expr::False,
-            Token::Nil => Expr::Nil,
-            Token::Number(n) => Expr::Number(n),
-            Token::Dots => Expr::Dots,
-            Token::String(ref s) => Expr::String(s.clone()),
-            Token::Ident(ref s) => Expr::Ident(s.clone()),
-            Token::Char(c) if c == '{' => self.table_ctor()?,
-            Token::Function => self.function()?,
-            _ => self.prefixexp()?
+        let mut node = match self.token {
+            Token::True => ExprNode::new(Expr::True),
+            Token::False => ExprNode::new(Expr::False),
+            Token::Nil => ExprNode::new(Expr::Nil),
+            Token::Number(n) => ExprNode::new(Expr::Number(n)),
+            Token::Dots => ExprNode::new(Expr::Dots),
+            Token::String(ref s) => ExprNode::new(Expr::String(s.clone())),
+            Token::Char(c) if c == '{' => return Ok(self.table_ctor()?),
+            Token::Function => return Ok(self.function()?),
+            _ => return Ok(self.primaryexp()?)
         };
         self.next()?;
-
-        let mut node = ExprNode::new(e);
-        node.set_line(line);
-        node.set_last_line(self.line_number);
-
         //println!("simple_expr => {:#?}", node);
-
         Ok(node)
     }
 
     fn sub_expression(&mut self, limit: u8) -> Result<(ExprNode, BinaryOpr)> {
         let op = unary_op(&self.token);
+        let line = self.line_number;
         let mut expr = if op != UnaryOpr::NoUnary {
-            let line = self.line_number;
             self.next()?;
             let sub = self.sub_expression(UNARY_PRIORITY)?.0;
             let mut node = ExprNode::new(Expr::UnaryOp(op, Box::new(sub)));
-            node.set_line(line);
-            node.set_last_line(self.line_number);
             node
         } else {
             self.simple_expr()?
         };
+        expr.set_line(line);
+        expr.set_last_line(self.line_number);
 
         let mut op = binary_op(&self.token);
         loop {

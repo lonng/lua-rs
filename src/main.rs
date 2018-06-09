@@ -5,7 +5,7 @@ use lua::state::State;
 fn main() {
     let mut state = State::new();
     let result = state.load_string(r"
-        if hello and hello1 or hello2 and hello3 then
+        --[[if hello and hello1 or hello2 and hello3 then
             if {
                 a = b,
                 c = d;
@@ -33,6 +33,8 @@ fn main() {
 
         if function(a, b, c, ...) if a then  end end then
         end
+        --]]
+        if a.b.c.d.e.f then end
     ");
     //let result = state.load_file("lua-tests/api.lua");
     match result {
