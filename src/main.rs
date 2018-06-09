@@ -31,7 +31,7 @@ fn main() {
             end
         end
 
-        if function(a, b, c, ...) end then
+        if function(a, b, c, ...) if a then  end end then
         end
     ");
     //let result = state.load_file("lua-tests/api.lua");
