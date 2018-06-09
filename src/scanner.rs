@@ -39,7 +39,6 @@ pub enum Token {
     GE,
     LE,
     NE,
-    DoubleColon,
     EOF,
     Number(f64),
     Ident(String),
@@ -83,7 +82,6 @@ impl ToString for Token {
                     Token::GE => ">=",
                     Token::LE => "<=",
                     Token::NE => "~=",
-                    Token::DoubleColon => "::",
                     Token::EOF => "<eof>",
                     _ => unreachable!()
                 };
@@ -182,7 +180,7 @@ impl<R: Read> Scanner<R> {
                 }
                 '<' => {
                     self.advance();
-                    if self.current == '=' {
+                    if self.current != '=' {
                         return Ok(Token::Char('<'));
                     }
                     self.advance();
@@ -190,7 +188,7 @@ impl<R: Read> Scanner<R> {
                 }
                 '>' => {
                     self.advance();
-                    if self.current == '=' {
+                    if self.current != '=' {
                         return Ok(Token::Char('>'));
                     }
                     self.advance();
@@ -198,19 +196,11 @@ impl<R: Read> Scanner<R> {
                 }
                 '~' => {
                     self.advance();
-                    if self.current == '=' {
+                    if self.current != '=' {
                         return Ok(Token::Char('~'));
                     }
                     self.advance();
                     return Ok(Token::NE);
-                }
-                ':' => {
-                    self.advance();
-                    if self.current == ':' {
-                        return Ok(Token::Char(':'));
-                    }
-                    self.advance();
-                    return Ok(Token::DoubleColon);
                 }
                 '"' | '\'' => return self.read_string(),
                 '.' => {
