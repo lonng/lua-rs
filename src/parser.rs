@@ -298,7 +298,7 @@ impl<R: Read> Parser<R> {
             Token::Ident(ref s) => {
                 next = true;
                 vec![ExprNode::new(Expr::Ident(s.clone()))]
-            },
+            }
             _ => return Err(Error::SyntaxError("function arguments expected".to_string()))
         };
         if next {
@@ -338,7 +338,7 @@ impl<R: Read> Parser<R> {
                 Token::Char(':') => {
                     self.next()?;
                     let method = if let Token::Ident(ref s) = self.token {
-                       s.clone()
+                        s.clone()
                     } else {
                         return Err(Error::SyntaxError(format!("unexpected symbol")));
                     };
@@ -351,7 +351,7 @@ impl<R: Read> Parser<R> {
                     let args = self.fnargs()?;
                     let call = FuncCall::new(expr, args);
                     expr = ExprNode::new(Expr::FuncCall(Box::new(call)));
-                },
+                }
                 _ => return Ok(expr)
             };
         }
@@ -457,7 +457,20 @@ impl<R: Read> Parser<R> {
         Ok(StmtNode::new(Stmt::If(ifthen)))
     }
 
-    fn whilestat(&mut self, line: i32) -> Result<StmtNode> { unimplemented!() }
+    /// ```BNF
+    /// whilestat -> WHILE cond DO block END
+    /// ```
+    fn whilestat(&mut self, line: i32) -> Result<StmtNode> {
+        debug_assert!(self.token == Token::While);
+        let line = self.line_number;
+        self.next()?; // skip while
+        let cond = self.expression()?;
+        self.check_next(Token::Do)?;
+        let stmts = self.block()?;
+        self.check_match(Token::End, Token::While, line)?;
+        Ok(StmtNode::new(Stmt::While(cond, stmts)))
+    }
+
     fn forstat(&mut self, line: i32) -> Result<StmtNode> { unimplemented!() }
     fn repeatstat(&mut self, line: i32) -> Result<StmtNode> { unimplemented!() }
     fn funcstat(&mut self, line: i32) -> Result<StmtNode> { unimplemented!() }
