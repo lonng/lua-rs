@@ -64,6 +64,7 @@ pub enum Expr {
     AttrGet(Box<ExprNode>, Box<ExprNode>),
     Table(Vec<Field>),
     FuncCall(Box<FuncCall>),
+    MethodCall(Box<MethodCall>),
 
     /// BinaryOp(Operator, Lhs, Rhs)
     BinaryOp(BinaryOpr, Box<ExprNode>, Box<ExprNode>),
@@ -120,12 +121,35 @@ pub struct FuncName {
 }
 
 #[derive(Debug)]
-pub struct FuncCall {
-    func: ExprNode,
+pub struct MethodCall {
     receiver: ExprNode,
     method: String,
     args: Vec<ExprNode>,
-    adjust_ret: bool,
+}
+
+impl MethodCall {
+    pub fn new(receiver: ExprNode, method: String, args: Vec<ExprNode>) -> MethodCall {
+        MethodCall {
+            receiver,
+            method,
+            args,
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct FuncCall {
+    func: ExprNode,
+    args: Vec<ExprNode>,
+}
+
+impl FuncCall {
+    pub fn new(func: ExprNode, args: Vec<ExprNode>) -> FuncCall {
+        FuncCall {
+            func,
+            args,
+        }
+    }
 }
 
 #[derive(Debug)]

@@ -189,7 +189,7 @@ impl<R: Read> Parser<R> {
         Ok(field)
     }
 
-    fn table_ctor(&mut self) -> Result<ExprNode> {
+    fn constructor(&mut self) -> Result<ExprNode> {
         debug_assert!(self.token == Token::Char('{'));
         let mut fields: Vec<Field> = vec![];
         self.next()?;
@@ -221,6 +221,15 @@ impl<R: Read> Parser<R> {
             self.testnext(&Token::Char(','))?;
         }
         Ok(names)
+    }
+
+    fn exprlist(&mut self) -> Result<Vec<ExprNode>> {
+        let mut exprs = vec![self.expression()?];
+        while self.testnext(&Token::Char(','))? {
+            let expr = self.expression()?;
+            exprs.push(expr);
+        }
+        Ok(exprs)
     }
 
     fn function(&mut self) -> Result<ExprNode> {
@@ -270,6 +279,34 @@ impl<R: Read> Parser<R> {
         Ok(expr)
     }
 
+    fn fnargs(&mut self) -> Result<Vec<ExprNode>> {
+        let line = self.line_number;
+        let mut next = false;
+        let expr = match self.token {
+            Token::Char('(') => {
+                self.next()?;
+                let exprs = if self.token != Token::Char(')') {
+                    self.exprlist()?
+                } else {
+                    // no arguments
+                    vec![]
+                };
+                self.check_match(Token::Char(')'), Token::Char('('), line)?;
+                exprs
+            }
+            Token::Char('{') => vec![self.constructor()?],
+            Token::Ident(ref s) => {
+                next = true;
+                vec![ExprNode::new(Expr::Ident(s.clone()))]
+            },
+            _ => return Err(Error::SyntaxError("function arguments expected".to_string()))
+        };
+        if next {
+            self.next()?;
+        }
+        Ok(expr)
+    }
+
     /// Primary expression
     ///
     /// ```BNF
@@ -284,20 +321,40 @@ impl<R: Read> Parser<R> {
                     self.next()?;
                     if let Token::Ident(ref s) = self.token {
                         let key = ExprNode::new(Expr::String(s.clone()));
-                        let mut get = Expr::AttrGet(Box::new(expr), Box::new(key));
-                        expr = ExprNode::new(get);
+                        let mut obj = Expr::AttrGet(Box::new(expr), Box::new(key));
+                        expr = ExprNode::new(obj);
                     } else {
-                        return Err(Error::SyntaxError(format!("ident expected")));
+                        return Err(Error::SyntaxError(format!("unexpected symbol")));
                     }
                     self.next()?;
                 }
-                Token::Char('[') => unimplemented!(),
-                Token::Char(':') => unimplemented!(),
-                Token::Char('(') | Token::String(_) | Token::Char('{') => unimplemented!(),
+                Token::Char('[') => {
+                    self.next()?;
+                    let mut key = self.expression()?;
+                    let mut obj = Expr::AttrGet(Box::new(expr), Box::new(key));
+                    expr = ExprNode::new(obj);
+                    self.check_next(Token::Char(']'))?;
+                }
+                Token::Char(':') => {
+                    self.next()?;
+                    let method = if let Token::Ident(ref s) = self.token {
+                       s.clone()
+                    } else {
+                        return Err(Error::SyntaxError(format!("unexpected symbol")));
+                    };
+                    self.next()?;
+                    let args = self.fnargs()?;
+                    let call = MethodCall::new(expr, method, args);
+                    expr = ExprNode::new(Expr::MethodCall(Box::new(call)));
+                }
+                Token::Char('(') | Token::Ident(_) | Token::Char('{') => {
+                    let args = self.fnargs()?;
+                    let call = FuncCall::new(expr, args);
+                    expr = ExprNode::new(Expr::FuncCall(Box::new(call)));
+                },
                 _ => return Ok(expr)
             };
         }
-        unimplemented!()
     }
 
     /// Simple expression
@@ -315,7 +372,7 @@ impl<R: Read> Parser<R> {
             Token::Number(n) => ExprNode::new(Expr::Number(n)),
             Token::Dots => ExprNode::new(Expr::Dots),
             Token::String(ref s) => ExprNode::new(Expr::String(s.clone())),
-            Token::Char(c) if c == '{' => return Ok(self.table_ctor()?),
+            Token::Char(c) if c == '{' => return Ok(self.constructor()?),
             Token::Function => return Ok(self.function()?),
             _ => return Ok(self.primaryexp()?)
         };
