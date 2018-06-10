@@ -214,7 +214,7 @@ impl<R: Read> Parser<R> {
         loop {
             match self.token {
                 Token::Ident(ref name) => names.push(name.clone()),
-                Token::Char(',') => self.unexpected(Token::Char(','))?,
+                Token::Char(',') => return Err(self.unexpected(&self.token)),
                 _ => break
             }
             self.next()?;
@@ -273,7 +273,7 @@ impl<R: Read> Parser<R> {
                 self.check(Token::Char(')'))?;
                 expr
             }
-            _ => return Err(Error::SyntaxError("unexpected symbol".to_string()))
+            _ => return Err(self.unexpected(&self.token))
         };
         self.next()?;
         Ok(expr)
@@ -324,7 +324,7 @@ impl<R: Read> Parser<R> {
                         let mut obj = Expr::AttrGet(Box::new(expr), Box::new(key));
                         expr = ExprNode::new(obj);
                     } else {
-                        return Err(Error::SyntaxError(format!("unexpected symbol")));
+                        return Err(self.unexpected(&self.token));
                     }
                     self.next()?;
                 }
@@ -340,7 +340,7 @@ impl<R: Read> Parser<R> {
                     let method = if let Token::Ident(ref s) = self.token {
                         s.clone()
                     } else {
-                        return Err(Error::SyntaxError(format!("unexpected symbol")));
+                        return Err(self.unexpected(&self.token));
                     };
                     self.next()?;
                     let args = self.fnargs()?;
@@ -463,7 +463,7 @@ impl<R: Read> Parser<R> {
     fn whilestat(&mut self, line: i32) -> Result<StmtNode> {
         debug_assert!(self.token == Token::While);
         let line = self.line_number;
-        self.next()?; // skip while
+        self.next()?; // skip WHILE
         let cond = self.expression()?;
         self.check_next(Token::Do)?;
         let stmts = self.block()?;
@@ -471,7 +471,64 @@ impl<R: Read> Parser<R> {
         Ok(StmtNode::new(Stmt::While(cond, stmts)))
     }
 
-    fn forstat(&mut self, line: i32) -> Result<StmtNode> { unimplemented!() }
+    fn forbody(&mut self) -> Result<Vec<StmtNode>> {
+        self.check_next(Token::Do)?;
+        self.block()
+    }
+
+    fn fornum(&mut self, varname: String) -> Result<StmtNode> {
+        self.check_next(Token::Char('='))?;
+        let init = self.expression()?;
+        self.check_next(Token::Char(','))?;
+        let limit = self.expression()?;
+        // skip optional
+        let skip = if self.testnext(&Token::Char(','))? {
+            self.expression()?
+        } else {
+            ExprNode::new(Expr::Number(1.0))
+        };
+        let body = self.forbody()?;
+        Ok(StmtNode::new(Stmt::NumberFor(varname, init, limit, skip, body)))
+    }
+
+    fn forlist(&mut self, indexname: String) -> Result<StmtNode> {
+        let mut names = vec![indexname];
+        while self.testnext(&Token::Char(','))? {
+            if let Token::Ident(ref s) = self.token {
+                names.push(s.clone());
+            } else {
+                return Err(self.unexpected(&self.token));
+            }
+            self.next()?;
+        }
+        self.check_next(Token::In)?;
+        let exprs = self.exprlist()?;
+        let body = self.forbody()?;
+        Ok(StmtNode::new(Stmt::GenericFor(names, exprs, body)))
+    }
+
+    /// ```BNF
+    /// forstat -> FOR (fornum | forlist) END
+    /// ```
+    fn forstat(&mut self, line: i32) -> Result<StmtNode> {
+        debug_assert!(self.token == Token::For);
+        let line = self.line_number;
+        self.next()?; // skip FOR
+        let varname = if let Token::Ident(ref s) = self.token {
+            s.clone()
+        } else {
+            return Err(Error::SyntaxError("unexpected symbol".to_string()));
+        };
+        self.next()?;
+        let stmt = match self.token {
+            Token::Char('=') => self.fornum(varname)?,
+            Token::Char(',') | Token::In => self.forlist(varname)?,
+            _ => return Err(Error::SyntaxError("= or in expected".to_string()))
+        };
+        self.check_match(Token::End, Token::For, line);
+        Ok(stmt)
+    }
+
     fn repeatstat(&mut self, line: i32) -> Result<StmtNode> { unimplemented!() }
     fn funcstat(&mut self, line: i32) -> Result<StmtNode> { unimplemented!() }
     fn localfunc(&mut self) -> Result<StmtNode> { unimplemented!() }
@@ -516,8 +573,8 @@ impl<R: Read> Parser<R> {
         }
     }
 
-    fn unexpected(&mut self, t: Token) -> Result<()> {
+    fn unexpected(&self, t: &Token) -> Error {
         let err = format!("{}:{}: unexpected: {}", self.source, self.line_number, t.to_string());
-        Err(Error::SyntaxError(err))
+        Error::SyntaxError(err)
     }
 }
