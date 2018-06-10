@@ -95,10 +95,9 @@ impl<R: Read> Parser<R> {
         Ok(())
     }
 
-    fn block_follow(&self, with_until: bool) -> bool {
+    fn block_follow(&self) -> bool {
         match self.token {
-            Token::Else | Token::Elseif | Token::End | Token::EOF => true,
-            Token::Until => with_until,
+            Token::Else | Token::Elseif | Token::End | Token::Until | Token::EOF => true,
             _ => false,
         }
     }
@@ -106,7 +105,7 @@ impl<R: Read> Parser<R> {
     fn block(&mut self) -> Result<Vec<StmtNode>> {
         let mut stmts: Vec<StmtNode> = vec![];
         loop {
-            if self.block_follow(true) {
+            if self.block_follow() {
                 break;
             }
 
@@ -529,7 +528,19 @@ impl<R: Read> Parser<R> {
         Ok(stmt)
     }
 
-    fn repeatstat(&mut self, line: i32) -> Result<StmtNode> { unimplemented!() }
+    /// ```BNF
+    /// repeatstat -> REPEAT block UNTIL cond
+    /// ```
+    fn repeatstat(&mut self, line: i32) -> Result<StmtNode> {
+        debug_assert!(self.token == Token::Repeat);
+        let line = self.line_number;
+        self.next()?; // skip REPEAT
+        let stmts = self.block()?;
+        self.check_match(Token::Until, Token::Repeat, line)?;
+        let cond = self.expression()?;
+        Ok(StmtNode::new(Stmt::Repeat(cond, stmts)))
+    }
+
     fn funcstat(&mut self, line: i32) -> Result<StmtNode> { unimplemented!() }
     fn localfunc(&mut self) -> Result<StmtNode> { unimplemented!() }
 

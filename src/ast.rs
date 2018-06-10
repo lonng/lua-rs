@@ -186,6 +186,9 @@ pub enum Stmt {
     /// While(Condition, Stmts)
     While(ExprNode, Vec<StmtNode>),
 
+    /// Repeat(Condition, Stmts)
+    Repeat(ExprNode, Vec<StmtNode>),
+
     /// If(Condition, Then, Else)
     If(IfThenElse),
 

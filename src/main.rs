@@ -37,10 +37,12 @@ fn main() {
         if a[b+c*x+d+c] then end
         if a:x(y,b, z(cc)) then end
         while x.y.z:w(a,b,c) do end
-        --]]
 
         for a = 1, a < 10, 1 do end
         for a, b in xya do end
+        --]]
+
+        repeat until x.b.c > 1000
     ");
     //let result = state.load_file("lua-tests/api.lua");
     match result {
