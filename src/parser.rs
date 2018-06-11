@@ -108,11 +108,7 @@ impl<R: Read> Parser<R> {
             if self.block_follow() {
                 break;
             }
-
             stmts.push(self.statement()?);
-            if self.token == Token::Return {
-                break;
-            }
         }
         return Ok(stmts);
     }
@@ -154,10 +150,7 @@ impl<R: Read> Parser<R> {
                     self.localstat()?
                 }
             }
-            Token::Return => {
-                self.next()?;
-                self.retstat()?
-            }
+            Token::Return => self.retstat()?,
             Token::Break => self.breakstat()?,
             _ => self.exprstat()?
         };
@@ -231,10 +224,7 @@ impl<R: Read> Parser<R> {
         Ok(exprs)
     }
 
-    fn function(&mut self) -> Result<ExprNode> {
-        debug_assert!(self.token == Token::Function);
-        self.next()?;
-
+    fn funcbody(&mut self) -> Result<ExprNode> {
         // paramater list
         self.check_next(Token::Char('('))?;
         let mut parlist = ParList::new();
@@ -252,6 +242,12 @@ impl<R: Read> Parser<R> {
         let line = self.line_number;
         self.check_next(Token::End)?;
         Ok(ExprNode::new(Expr::Function(parlist, block)))
+    }
+
+    fn function(&mut self) -> Result<ExprNode> {
+        debug_assert!(self.token == Token::Function);
+        self.next()?;
+        self.funcbody()
     }
 
     /// Prefix expression
@@ -541,20 +537,121 @@ impl<R: Read> Parser<R> {
         Ok(StmtNode::new(Stmt::Repeat(cond, stmts)))
     }
 
-    fn funcstat(&mut self, line: i32) -> Result<StmtNode> { unimplemented!() }
-    fn localfunc(&mut self) -> Result<StmtNode> { unimplemented!() }
+    fn funcstat(&mut self, line: i32) -> Result<StmtNode> {
+        debug_assert!(self.token == Token::Function);
+        self.next()?; // skip FUNCTION
 
-    fn localstat(&mut self) -> Result<StmtNode> {
-        unimplemented!()
+        // funcname
+        let mut nameexpr = if let Token::Ident(ref s) = self.token {
+            ExprNode::new(Expr::String(s.clone()))
+        } else {
+            return Err(self.unexpected(&self.token));
+        };
+        self.next()?;
+
+        while self.testnext(&Token::Char('.'))? {
+            if let Token::Ident(ref s) = self.token {
+                let key = ExprNode::new(Expr::String(s.clone()));
+                let mut obj = Expr::AttrGet(Box::new(nameexpr), Box::new(key));
+                nameexpr = ExprNode::new(obj);
+            } else {
+                return Err(self.unexpected(&self.token));
+            }
+            self.next()?;
+        }
+
+        let method = if self.testnext(&Token::Char(':'))? {
+            if let Token::Ident(ref s) = self.token {
+                Some(s.clone())
+            } else {
+                return Err(self.unexpected(&self.token));
+            }
+        } else {
+            None
+        };
+        self.next()?;
+
+        let body = self.funcbody()?;
+        let stmt = match method {
+            Some(m) => {
+                let name = MethodName::new(nameexpr, m);
+                Stmt::MethodDef(name, body)
+            }
+            None => {
+                let name = FuncName::new(nameexpr);
+                Stmt::FuncDef(name, body)
+            }
+        };
+        Ok(StmtNode::new(stmt))
     }
-    fn exprstat(&mut self) -> Result<StmtNode> { unimplemented!() }
-    fn lebalstat(&mut self) -> Result<StmtNode> { unimplemented!() }
+
+    fn localfunc(&mut self) -> Result<StmtNode> {
+        let mut nameexpr = if let Token::Ident(ref s) = self.token {
+            ExprNode::new(Expr::String(s.clone()))
+        } else {
+            return Err(self.unexpected(&self.token));
+        };
+        self.next()?;
+        let name = FuncName::new(nameexpr);
+        let body = self.funcbody()?;
+        let stmt = Stmt::FuncDef(name, body);
+        Ok(StmtNode::new(stmt))
+    }
+
+    /// ```BNF
+    /// stat -> LOCAL NAME {`,' NAME} [`=' explist1]
+    /// ```
+    fn localstat(&mut self) -> Result<StmtNode> {
+        let namelist = self.namelist()?;
+        let exprlist = if self.testnext(&Token::Char('='))? {
+            self.exprlist()?
+        } else {
+            vec![]
+        };
+        let stmt = Stmt::LocalAssign(namelist, exprlist);
+        println!("localstat= >{:?}", self.token);
+        Ok(StmtNode::new(stmt))
+    }
+
+    /// ```BNF
+    /// stat -> func | assignment
+    /// ```
+    fn exprstat(&mut self) -> Result<StmtNode> {
+        let expr = self.primaryexp()?;
+        let stmt = match expr.inner() {
+            &Expr::FuncCall(_) => Stmt::FuncCall(expr),
+            &Expr::MethodCall(_) => Stmt::MethodCall(expr),
+            _ => {
+                let mut lhs = vec![expr];
+                while self.testnext(&Token::Char(','))? {
+                    lhs.push(self.primaryexp()?)
+                }
+                self.check_next(Token::Char('='))?;
+                let rhs = self.exprlist()?;
+                Stmt::Assign(lhs, rhs)
+            }
+        };
+        Ok(StmtNode::new(stmt))
+    }
+
     fn breakstat(&mut self) -> Result<StmtNode> {
-        unimplemented!();
+        debug_assert!(self.token == Token::Break);
+        self.next()?; // skip BREAK
+        let stmt = Stmt::Break;
+        Ok(StmtNode::new(stmt))
     }
 
     fn retstat(&mut self) -> Result<StmtNode> {
-        unimplemented!();
+        debug_assert!(self.token == Token::Return);
+        self.next()?; // skip RETURE
+        println!("retstat => {:?}", self.token);
+        let exprlist = if self.block_follow() || self.token == Token::Char(';') {
+            vec![]
+        } else {
+            self.exprlist()?
+        };
+        let stmt = Stmt::Return(exprlist);
+        Ok(StmtNode::new(stmt))
     }
 
     fn check_next(&mut self, expect: Token) -> Result<()> {

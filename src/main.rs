@@ -40,9 +40,16 @@ fn main() {
 
         for a = 1, a < 10, 1 do end
         for a, b in xya do end
-        --]]
-
         repeat until x.b.c > 1000
+
+        function a.b.c:d(x,y,z)
+            local function hello(x,b,c,d) end
+            local x,c,d,d = 1+2,3+4,5+6,7+8
+            return x,c.d,c.a
+        end
+        --]]
+        a = 100
+        b = a + 100
     ");
     //let result = state.load_file("lua-tests/api.lua");
     match result {
