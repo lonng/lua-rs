@@ -403,20 +403,6 @@ impl<R: Read> Scanner<R> {
                             let hex_esc = self.read_hex_escape()?;
                             self.save(hex_esc);
                         }
-                        _ if current == 'z' => {
-                            self.advance();
-                            loop {
-                                let c = self.current;
-                                if is_new_line(c) {
-                                    self.incr_line_number();
-                                } else {
-                                    self.advance();
-                                }
-                                if !(c as char).is_whitespace() {
-                                    break;
-                                }
-                            }
-                        }
                         _ => {
                             if !is_decimal(current) {
                                 return Err(Error::LexicalError("invalid escape sequence".to_string()));
