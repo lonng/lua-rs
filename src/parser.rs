@@ -67,12 +67,11 @@ impl<R: Read> Parser<R> {
         }
     }
 
-    pub fn parse(&mut self) -> Result<Box<Chunk>> {
+    pub fn parse(&mut self) -> Result<Vec<StmtNode>> {
         self.next()?;
         let stmts = self.block()?;
-        println!("Stmts => {:#?}", stmts);
         self.check(Token::EOF)?;
-        Ok(Chunk::new())
+        Ok(stmts)
     }
 
     fn next(&mut self) -> Result<()> {
