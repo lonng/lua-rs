@@ -1,1 +1,1 @@
-lua-tests/* linguist-vendored
+lua-tests/*.lua linguist-language=Rust
