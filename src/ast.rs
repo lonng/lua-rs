@@ -15,12 +15,15 @@ impl<T> Node<T> {
         }
     }
 
+    pub fn inner(&self) -> &T {
+        &self.inner
+    }
+
     pub fn line(&self) -> i32 { self.line }
     pub fn set_line(&mut self, line: i32) { self.line = line }
     pub fn last_line(&self) -> i32 { self.last_line }
     pub fn set_last_line(&mut self, line: i32) { self.last_line = line }
 }
-
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum BinaryOpr {
@@ -116,8 +119,29 @@ impl ParList {
 #[derive(Debug)]
 pub struct FuncName {
     func: ExprNode,
+}
+
+impl FuncName {
+    pub fn new(func: ExprNode) -> FuncName {
+        FuncName {
+            func
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct MethodName {
     receiver: ExprNode,
     method: String,
+}
+
+impl MethodName {
+    pub fn new(receiver: ExprNode, method: String) -> MethodName {
+        MethodName {
+            receiver,
+            method,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -181,6 +205,8 @@ pub enum Stmt {
     /// LocalAssign(Names, Exprs)
     LocalAssign(Vec<String>, Vec<ExprNode>),
     FuncCall(ExprNode),
+    MethodCall(ExprNode),
+
     DoBlock(Vec<StmtNode>),
 
     /// While(Condition, Stmts)
@@ -199,7 +225,10 @@ pub enum Stmt {
     GenericFor(Vec<String>, Vec<ExprNode>, Vec<StmtNode>),
 
     /// FuncDef(Name, Func)
-    FuncDef(Box<FuncName>, ExprNode),
+    FuncDef(FuncName, ExprNode),
+
+    /// MethodDef(Name, Func)
+    MethodDef(MethodName, ExprNode),
     Return(Vec<ExprNode>),
     Break,
 }
