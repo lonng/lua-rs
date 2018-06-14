@@ -5,7 +5,7 @@ use std::io::{BufRead, BufReader, Cursor, Read};
 use std::io;
 use std::result;
 use std::string;
-use compile;
+use compiler;
 
 /// A State is an opaque structure representing per thread Lua state.
 #[derive(Debug)]
@@ -52,7 +52,7 @@ impl State {
         } else {
             let mut parser = parser::Parser::new(reader, name.to_string());
             let stmts = parser.parse()?;
-            compile::compile(stmts, name.to_string())?
+            compiler::compile(stmts, name.to_string())?
         };
 
         // TODO: save chunk
