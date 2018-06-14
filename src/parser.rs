@@ -169,6 +169,7 @@ impl<R: Read> Parser<R> {
                 break;
             }
             stmts.push(self.statement()?);
+            self.testnext(&Token::Char(';'))?;
         }
         return Ok(stmts);
     }
@@ -273,7 +274,9 @@ impl<R: Read> Parser<R> {
                 _ => break
             }
             self.next()?;
-            self.testnext(&Token::Char(','))?;
+            if !self.testnext(&Token::Char(','))? {
+                break
+            }
         }
         Ok(names)
     }
@@ -486,7 +489,6 @@ impl<R: Read> Parser<R> {
     fn ifstat(&mut self, line: i32) -> Result<StmtNode> {
         debug_assert!(self.token == Token::If);
         let mut ifthen = self.test_then_block()?;
-        println!("ifstat:{:?}", self.token);
         let mut elseifs: Vec<IfThenElse> = vec![];
         while self.token == Token::Elseif {
             let mut elseif = self.test_then_block()?;
@@ -620,11 +622,13 @@ impl<R: Read> Parser<R> {
         }
 
         let method = if self.testnext(&Token::Char(':'))? {
-            if let Token::Ident(ref s) = self.token {
+            let m = if let Token::Ident(ref s) = self.token {
                 Some(s.clone())
             } else {
                 return Err(self.unexpected(&self.token));
-            }
+            };
+            self.next()?;
+            m
         } else {
             None
         };
@@ -718,7 +722,6 @@ impl<R: Read> Parser<R> {
 
     fn check(&self, expect: Token) -> Result<()> {
         if self.token != expect {
-            panic!("======={}, expected: {:?}", self.line_number, expect);
             return Err(Error::SyntaxError(format!("{}:{}: {} expected",
                                                   self.source, self.line_number, expect.to_string())));
         }
