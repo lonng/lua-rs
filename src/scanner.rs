@@ -608,7 +608,7 @@ impl<R: Read> Scanner<R> {
     /// "in", "local", "nil", "not", "or", "repeat",
     /// "return", "then", "true", "until", "while",
     /// /* other terminal symbols */
-    /// "..", "...", "==", ">=", "<=", "~=", "::", "<eof>",
+    /// "..", "...", "==", ">=", "<=", "~=", "<eof>",
     /// "<number>", "<name>", "<string>"];
     /// ```
     fn reserved_or_name(&mut self) -> Result<Token> {
