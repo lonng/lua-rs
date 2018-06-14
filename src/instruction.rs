@@ -2,18 +2,18 @@
 
 type OpCodeSize = i32;
 
-const OPCODE_SIZE: OpCodeSize = 6;
-const OPCODE_SIZEA: OpCodeSize = 9;
-const OPCODE_SIZEB: OpCodeSize = 9;
-const OPCODE_SIZEC: OpCodeSize = 9;
-const OPCODE_SIZEBx: OpCodeSize = 18;
-const OPCODE_SIZESBx: OpCodeSize = 18;
+pub const OPCODE_SIZE: OpCodeSize = 6;
+pub const OPCODE_SIZEA: OpCodeSize = 9;
+pub const OPCODE_SIZEB: OpCodeSize = 9;
+pub const OPCODE_SIZEC: OpCodeSize = 9;
+pub const OPCODE_SIZEBx: OpCodeSize = 18;
+pub const OPCODE_SIZESBx: OpCodeSize = 18;
 
-const OPCODE_MAXA: OpCodeSize = 1 << OPCODE_SIZEA - 1;
-const OPCODE_MAXB: OpCodeSize = 1 << OPCODE_SIZEB - 1;
-const OPCODE_MAXC: OpCodeSize = 1 << OPCODE_SIZEC - 1;
-const OPCODE_MAXBx: OpCodeSize = 1 << OPCODE_SIZEBx - 1;
-const OPCODE_MAXSBx: OpCodeSize = OPCODE_MAXBx >> 1;
+pub const OPCODE_MAXA: OpCodeSize = 1 << OPCODE_SIZEA - 1;
+pub const OPCODE_MAXB: OpCodeSize = 1 << OPCODE_SIZEB - 1;
+pub const OPCODE_MAXC: OpCodeSize = 1 << OPCODE_SIZEC - 1;
+pub const OPCODE_MAXBx: OpCodeSize = 1 << OPCODE_SIZEBx - 1;
+pub const OPCODE_MAXSBx: OpCodeSize = OPCODE_MAXBx >> 1;
 
 /// Lua 5.1.4 opcodes layout:
 ///
