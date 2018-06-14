@@ -1,4 +1,4 @@
-pub type Instruction = u32;
+#![allow(non_snake_case)]
 
 type OpCodeSize = i32;
 
@@ -28,95 +28,95 @@ const OPCODE_MAXSBx: OpCodeSize = OPCODE_MAXBx >> 1;
 /// |----------+----------+-----------+-----------|
 /// |  opcode  |    A     |      sBx(signed)      |
 /// +---------------------------------------------+
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
-pub enum OpCode {
-    /// A B     R(A) := R(B)
-    MOVE,
-    /// A B     R(A) := R(B); followed by R(C) MOVE ops
-    MOVEN,
-    /// A Bx    R(A) := Kst(Bx)
-    LOADK,
-    /// A B C   R(A) := (Bool)B; if (C) pc++
-    LOADBOOL,
-    /// A B     R(A) := ... := R(B) := nil
-    LOADNIL,
-    /// A B     R(A) := UpValue[B]
-    GETUPVAL,
-    /// A Bx    R(A) := Gbl[Kst(Bx)]
-    GETGLOBAL,
-    /// A B C   R(A) := R(B)[RK(C)]
-    GETTABLE,
-    /// A B C   R(A) := R(B)[RK(C)] ; RK(C) is constant string
-    GETTABLEKS,
-    /// A Bx    Gbl[Kst(Bx)] := R(A)
-    SETGLOBAL,
-    /// A B     UpValue[B] := R(A)
-    SETUPVAL,
-    /// A B C   R(A)[RK(B)] := RK(C)
-    SETTABLE,
-    /// A B C   R(A)[RK(B)] := RK(C) ; RK(B) is constant string
-    SETTABLEKS,
-    /// A B C   R(A) := {} (size = BC)
-    NEWTABLE,
-    /// A B C   R(A+1) := R(B); R(A) := R(B)[RK(C)]
-    SELF,
-    /// A B C   R(A) := RK(B) + RK(C)
-    ADD,
-    /// A B C   R(A) := RK(B) - RK(C)
-    SUB,
-    /// A B C   R(A) := RK(B) * RK(C)
-    MUL,
-    /// A B C   R(A) := RK(B) / RK(C)
-    DIV,
-    /// A B C   R(A) := RK(B) % RK(C)
-    MOD,
-    /// A B C   R(A) := RK(B) ^ RK(C)
-    POW,
-    /// A B     R(A) := -R(B)
-    UNM,
-    /// A B     R(A) := not R(B)
-    NOT,
-    /// A B     R(A) := length of R(B)
-    LEN,
-    /// A B C   R(A) := R(B).. ... ..R(C)
-    CONCAT,
-    /// sBx     pc+=sBx
-    JMP,
-    /// A B C   if ((RK(B) == RK(C)) ~= A) then pc++
-    EQ,
-    /// A B C   if ((RK(B) <  RK(C)) ~= A) then pc++
-    LT,
-    /// A B C   if ((RK(B) <= RK(C)) ~= A) then pc++
-    LE,
-    /// A C     if not (R(A) <=> C) then pc++
-    TEST,
-    /// A B C   if (R(B) <=> C) then R(A) := R(B) else pc++
-    TESTSET,
-    /// A B C   R(A) ... R(A+C-2) := R(A)(R(A+1) ... R(A+B-1))
-    CALL,
-    /// A B C   return R(A)(R(A+1) ... R(A+B-1))
-    TAILCALL,
-    /// A B     return R(A) ... R(A+B-2)      (see note)
-    RETURN,
-    /// A sBx   R(A)+=R(A+2);
-    ///         if R(A) <?= R(A+1) then { pc+=sBx; R(A+3)=R(A) }
-    FORLOOP,
-    /// A sBx   R(A)-=R(A+2); pc+=sBx
-    FORPREP,
-    /// A C     R(A+3) ... R(A+3+C) := R(A)(R(A+1) R(A+2));
-    ///         if R(A+3) ~= nil then { pc++; R(A+2)=R(A+3); }
-    TFORLOOP,
-    /// A B C   R(A)[(C-1)*FPF+i] := R(A+i) 1 <= i <= B
-    SETLIST,
-    /// A       close all variables in the stack up to (>=) R(A)
-    CLOSE,
-    /// A Bx    R(A) := closure(KPROTO[Bx] R(A) ... R(A+n))
-    CLOSURE,
-    /// A B     R(A) R(A+1) ... R(A+B-1) = vararg
-    VARARG,
-    /// NOP
-    NOP,
-}
+
+pub type OpCode = i32;
+
+/// A B     R(A) := R(B)
+const OP_MOVE: OpCode = 0;
+/// A B     R(A) := R(B); followed by R(C) MOVE ops
+const OP_MOVEN: OpCode = 1;
+/// A Bx    R(A) := Kst(Bx)
+const OP_LOADK: OpCode = 2;
+/// A B C   R(A) := (Bool)B; if (C) pc++
+const OP_LOADBOOL: OpCode = 3;
+/// A B     R(A) := ... := R(B) := nil
+const OP_LOADNIL: OpCode = 4;
+/// A B     R(A) := UpValue[B]
+const OP_GETUPVAL: OpCode = 5;
+/// A Bx    R(A) := Gbl[Kst(Bx)]
+const OP_GETGLOBAL: OpCode = 6;
+/// A B C   R(A) := R(B)[RK(C)]
+const OP_GETTABLE: OpCode = 7;
+/// A B C   R(A) := R(B)[RK(C)] ; RK(C) is constant string
+const OP_GETTABLEKS: OpCode = 8;
+/// A Bx    Gbl[Kst(Bx)] := R(A)
+const OP_SETGLOBAL: OpCode = 9;
+/// A B     UpValue[B] := R(A)
+const OP_SETUPVAL: OpCode = 10;
+/// A B C   R(A)[RK(B)] := RK(C)
+const OP_SETTABLE: OpCode = 11;
+/// A B C   R(A)[RK(B)] := RK(C) ; RK(B) is constant string
+const OP_SETTABLEKS: OpCode = 12;
+/// A B C   R(A) := {} (size = BC)
+const OP_NEWTABLE: OpCode = 13;
+/// A B C   R(A+1) := R(B); R(A) := R(B)[RK(C)]
+const OP_SELF: OpCode = 14;
+/// A B C   R(A) := RK(B) + RK(C)
+const OP_ADD: OpCode = 15;
+/// A B C   R(A) := RK(B) - RK(C)
+const OP_SUB: OpCode = 16;
+/// A B C   R(A) := RK(B) * RK(C)
+const OP_MUL: OpCode = 17;
+/// A B C   R(A) := RK(B) / RK(C)
+const OP_DIV: OpCode = 18;
+/// A B C   R(A) := RK(B) % RK(C)
+const OP_MOD: OpCode = 19;
+/// A B C   R(A) := RK(B) ^ RK(C)
+const OP_POW: OpCode = 20;
+/// A B     R(A) := -R(B)
+const OP_UNM: OpCode = 21;
+/// A B     R(A) := not R(B)
+const OP_NOT: OpCode = 22;
+/// A B     R(A) := length of R(B)
+const OP_LEN: OpCode = 23;
+/// A B C   R(A) := R(B).. ... ..R(C)
+const OP_CONCAT: OpCode = 24;
+/// sBx     pc+=sBx
+const OP_JMP: OpCode = 25;
+/// A B C   if ((RK(B) == RK(C)) ~= A) then pc++
+const OP_EQ: OpCode = 26;
+/// A B C   if ((RK(B) <  RK(C)) ~= A) then pc++
+const OP_LT: OpCode = 27;
+/// A B C   if ((RK(B) <= RK(C)) ~= A) then pc++
+const OP_LE: OpCode = 28;
+/// A C     if not (R(A) <=> C) then pc++
+const OP_TEST: OpCode = 29;
+/// A B C   if (R(B) <=> C) then R(A) := R(B) else pc++
+const OP_TESTSET: OpCode = 30;
+/// A B C   R(A) ... R(A+C-2) := R(A)(R(A+1) ... R(A+B-1))
+const OP_CALL: OpCode = 31;
+/// A B C   return R(A)(R(A+1) ... R(A+B-1))
+const OP_TAILCALL: OpCode = 32;
+/// A B     return R(A) ... R(A+B-2)      (see note)
+const OP_RETURN: OpCode = 33;
+/// A sBx   R(A)+=R(A+2);
+///         if R(A) <?= R(A+1) then { pc+=sBx; R(A+3)=R(A) }
+const OP_FORLOOP: OpCode = 34;
+/// A sBx   R(A)-=R(A+2); pc+=sBx
+const OP_FORPREP: OpCode = 35;
+/// A C     R(A+3) ... R(A+3+C) := R(A)(R(A+1) R(A+2));
+///         if R(A+3) ~= nil then { pc++; R(A+2)=R(A+3); }
+const OP_TFORLOOP: OpCode = 36;
+/// A B C   R(A)[(C-1)*FPF+i] := R(A+i) 1 <= i <= B
+const OP_SETLIST: OpCode = 37;
+/// A       close all variables in the stack up to (>=) R(A)
+const OP_CLOSE: OpCode = 38;
+/// A Bx    R(A) := closure(KPROTO[Bx] R(A) ... R(A+n))
+const OP_CLOSURE: OpCode = 39;
+/// A B     R(A) R(A+1) ... R(A+B-1) = vararg
+const OP_VARARG: OpCode = 40;
+/// NOP
+const OP_NOP: OpCode = 41;
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 enum OpArgMode {
@@ -143,7 +143,7 @@ struct OpProp {
     typ: OpType,
 }
 
-static OP_NAMES: &'static [OpProp; (OpCode::NOP as usize + 1)] = &[
+static OP_NAMES: &'static [OpProp; (OP_NOP as usize + 1)] = &[
     OpProp { name: "MOVE", is_test: false, set_reg_a: true, mode_arg_b: OpArgMode::R, mode_arg_c: OpArgMode::N, typ: OpType::ABC },
     OpProp { name: "MOVEN", is_test: false, set_reg_a: true, mode_arg_b: OpArgMode::R, mode_arg_c: OpArgMode::N, typ: OpType::ABC },
     OpProp { name: "LOADK", is_test: false, set_reg_a: true, mode_arg_b: OpArgMode::K, mode_arg_c: OpArgMode::N, typ: OpType::ABx },
@@ -188,22 +188,158 @@ static OP_NAMES: &'static [OpProp; (OpCode::NOP as usize + 1)] = &[
     OpProp { name: "NOP", is_test: false, set_reg_a: false, mode_arg_b: OpArgMode::R, mode_arg_c: OpArgMode::N, typ: OpType::ASbx },
 ];
 
-impl ToString for OpCode {
-    fn to_string(&self) -> String {
-        OP_NAMES[*self as usize].name.to_string()
-    }
+pub fn op_to_string(op: i32) -> String {
+    OP_NAMES[op as usize].name.to_string()
 }
 
-impl Instruction {
-    #[inline]
-    pub fn with_ABC(op: OpCode, a: i32, b: i32) -> Instruction {
-        let mut inst: Instruction = 0;
+pub type Instruction = u32;
 
-    }
-
-    pub fn set_opcode(&mut self, op: OpCode) {
-
-    }
+pub fn get_opcode(inst: Instruction) -> OpCode {
+    (inst >> 26) as OpCode
 }
 
-pub fn op_to_string(op: Instruction) -> String {}
+pub fn set_opcode(inst: &mut Instruction, op: OpCode) {
+    *inst = (*inst & 0x3ffffff) | (op as u32) << 26
+}
+
+pub fn get_arga(inst: Instruction) -> i32 {
+    ((inst >> 18) & 0xff) as i32
+}
+
+pub fn set_arga(inst: &mut Instruction, a: i32) {
+    *inst = (*inst & 0xfc03ffff) | ((a as u32) & 0xff) << 18
+}
+
+pub fn get_argb(inst: Instruction) -> i32 {
+    (inst & 0x1ff) as i32
+}
+
+pub fn set_argb(inst: &mut Instruction, b: i32) {
+    *inst = (*inst & 0xfffffe00) | ((b as u32) & 0x1ff)
+}
+
+pub fn get_argc(inst: Instruction) -> i32 {
+    ((inst >> 9) & 0xff) as i32
+}
+
+pub fn set_argc(inst: &mut Instruction, c: i32) {
+    *inst = (*inst & 0xfffc01ff) | ((c as u32) & 0x1ff) << 9
+}
+
+pub fn get_argbx(inst: Instruction) -> i32 {
+    (inst & 0x3ffff) as i32
+}
+
+pub fn set_argbx(inst: &mut Instruction, bx: i32) {
+    *inst = (*inst & 0xfffc0000) | (bx & 0x3ffff) as u32
+}
+
+pub fn get_argsbx(inst: Instruction) -> i32 {
+    get_argbx(inst) - OPCODE_MAXSBx
+}
+
+pub fn set_argsbx(inst: &mut Instruction, sbx: i32) {
+    set_argbx(inst, sbx + OPCODE_MAXSBx)
+}
+
+pub fn ABC(op: OpCode, a: i32, b: i32, c: i32) -> Instruction {
+    let mut inst: Instruction = 0;
+    set_opcode(&mut inst, op);
+    set_arga(&mut inst, a);
+    set_argb(&mut inst, b);
+    set_argc(&mut inst, c);
+    inst
+}
+
+pub fn ABx(op: OpCode, a: i32, bx: i32) -> Instruction {
+    let mut inst: Instruction = 0;
+    set_opcode(&mut inst, op);
+    set_arga(&mut inst, a);
+    set_argbx(&mut inst, bx);
+    inst
+}
+
+pub fn ASBx(op: OpCode, a: i32, sbx: i32) -> Instruction {
+    let mut inst: Instruction = 0;
+    set_opcode(&mut inst, op);
+    set_arga(&mut inst, a);
+    set_argsbx(&mut inst, sbx);
+    inst
+}
+
+const opBitRk: OpCodeSize = 1 << (OPCODE_SIZEB - 1);
+const opMaxIndexRk: OpCodeSize = opBitRk - 1;
+
+pub fn is_k(v: i32) -> bool {
+    v & opBitRk != 0
+}
+
+pub fn rk_ask(v: i32) -> i32 {
+    v | opBitRk
+}
+
+pub fn to_string(inst: Instruction) -> String {
+    let op = get_opcode(inst);
+    if op > OP_NOP {
+        return String::new();
+    }
+
+    let prop = OP_NAMES[op as usize];
+    let arga = get_arga(inst);
+    let argb = get_argb(inst);
+    let argc = get_argc(inst);
+    let argbx = get_argbx(inst);
+    let argsbx = get_argsbx(inst);
+
+    let ops = match prop.typ {
+        OpType::ABC => format!("{}      |  {}, {}, {}", prop.name, arga, argb, argc),
+        OpType::ABx => format!("{}      |  {}, {}", prop.name, arga, argbx),
+        OpType::ASbx => format!("{}      |  {}, {}", prop.name, arga, argsbx)
+    };
+
+    match op {
+        OP_MOVE => format!("{}; R({}) := R({})", ops, arga, argb),
+        OP_MOVEN => format!("{}; R({}) := R({}); followed by {} MOVE ops", ops, arga, argb, argc),
+        OP_LOADK => format!("{}; R({}) := Kst({})", ops, arga, argbx),
+        OP_LOADBOOL => format!("{}; R({}) := (Bool){}; if ({}) pc++", ops, arga, argb, argc),
+        OP_LOADNIL => format!("{}; R({}) := ... := R({}) := nil", ops, arga, argb),
+        OP_GETUPVAL => format!("{}; R({}) := UpValue[{}]", ops, arga, argb),
+        OP_GETGLOBAL => format!("{}; R({}) := Gbl[Kst({})]", ops, arga, argbx),
+        OP_GETTABLE => format!("{}; R({}) := R({})[RK({})]", ops, arga, argb, argc),
+        OP_GETTABLEKS => format!("{}; R({}) := R({})[RK({})] ; RK({}) is constant string", ops, arga, argb, argc, argc),
+        OP_SETGLOBAL => format!("{}; Gbl[Kst({})] := R({})", ops, argbx, arga),
+        OP_SETUPVAL => format!("{}; UpValue[{}] := R({})", ops, argb, arga),
+        OP_SETTABLE => format!("{}; R({})[RK({})] := RK({})", ops, arga, argb, argc),
+        OP_SETTABLEKS => format!("{}; R({})[RK({})] := RK({}) ; RK({}) is constant string", ops, arga, argb, argc, argb),
+        OP_NEWTABLE => format!("{}; R({}) := {{}} (size = BC)", ops, arga),
+        OP_SELF => format!("{}; R({}+1) := R({}); R({}) := R({})[RK({})]", ops, arga, argb, arga, argb, argc),
+        OP_ADD => format!("{}; R({}) := RK({}) + RK({})", ops, arga, argb, argc),
+        OP_SUB => format!("{}; R({}) := RK({}) - RK({})", ops, arga, argb, argc),
+        OP_MUL => format!("{}; R({}) := RK({}) * RK({})", ops, arga, argb, argc),
+        OP_DIV => format!("{}; R({}) := RK({}) / RK({})", ops, arga, argb, argc),
+        OP_MOD => format!("{}; R({}) := RK({}) %% RK({})", ops, arga, argb, argc),
+        OP_POW => format!("{}; R({}) := RK({}) ^ RK({})", ops, arga, argb, argc),
+        OP_UNM => format!("{}; R({}) := -R({})", ops, arga, argb),
+        OP_NOT => format!("{}; R({}) := not R({})", ops, arga, argb),
+        OP_LEN => format!("{}; R({}) := length of R({})", ops, arga, argb),
+        OP_CONCAT => format!("{}; R({}) := R({}).. ... ..R({})", ops, arga, argb, argc),
+        OP_JMP => format!("{}; pc+={}", ops, argsbx),
+        OP_EQ => format!("{}; if ((RK({}) == RK({})) ~= {}) then pc++", ops, argb, argc, arga),
+        OP_LT => format!("{}; if ((RK({}) <  RK({})) ~= {}) then pc++", ops, argb, argc, arga),
+        OP_LE => format!("{}; if ((RK({}) <= RK({})) ~= {}) then pc++", ops, argb, argc, arga),
+        OP_TEST => format!("{}; if not (R({}) <=> {}) then pc++", ops, arga, argc),
+        OP_TESTSET => format!("{}; if (R({}) <=> {}) then R({}) := R({}) else pc++", ops, argb, argc, arga, argb),
+        OP_CALL => format!("{}; R({}) ... R({}+{}-2) := R({})(R({}+1) ... R({}+{}-1))", ops, arga, arga, argc, arga, arga, arga, argb),
+        OP_TAILCALL => format!("{}; return R({})(R({}+1) ... R({}+{}-1))", ops, arga, arga, arga, argb),
+        OP_RETURN => format!("{}; return R({}) ... R({}+{}-2)", ops, arga, arga, argb),
+        OP_FORLOOP => format!("{}; R({})+=R({}+2); if R({}) <?= R({}+1) then {{ pc+={}; R({}+3)=R({}) }}", ops, arga, arga, arga, arga, argsbx, arga, arga),
+        OP_FORPREP => format!("{}; R({})-=R({}+2); pc+={}", ops, arga, arga, argsbx),
+        OP_TFORLOOP => format!("{}; R({}+3) ... R({}+3+{}) := R({})(R({}+1) R({}+2)); if R({}+3) ~= nil then {{ pc++; R({}+2)=R({}+3); }}", ops, arga, arga, argc, arga, arga, arga, arga, arga, arga),
+        OP_SETLIST => format!("{}; R({})[({}-1)*FPF+i] := R({}+i) 1 <= i <= {}", ops, arga, argc, arga, argb),
+        OP_CLOSE => format!("{}; close all variables in the stack up to (>=) R({})", ops, arga),
+        OP_CLOSURE => format!("{}; R({}) := closure(KPROTO[{}] R({}) ... R({}+n))", ops, arga, argbx, arga, arga),
+        OP_VARARG => format!("{};  R({}) R({}+1) ... R({}+{}-1) = vararg", ops, arga, arga, arga, argb),
+        OP_NOP => String::new(),
+        _ => unreachable!()
+    }
+}

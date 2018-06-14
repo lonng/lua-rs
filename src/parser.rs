@@ -229,9 +229,12 @@ impl<R: Read> Parser<R> {
             }
             Token::Ident(_) => {
                 let key = self.expression()?;
-                self.check_next(Token::Char('='))?;
-                let val = self.expression()?;
-                Field::new(Some(key), val)
+                if self.testnext(&Token::Char('='))? {
+                    let val = self.expression()?;
+                    Field::new(Some(key), val)
+                } else {
+                    Field::new(None, key)
+                }
             }
             _ => {
                 let val = self.expression()?;
@@ -350,7 +353,7 @@ impl<R: Read> Parser<R> {
                 exprs
             }
             Token::Char('{') => vec![self.constructor()?],
-            Token::Ident(ref s) => {
+            Token::String(ref s) => {
                 next = true;
                 vec![ExprNode::new(Expr::Ident(s.clone()))]
             }
@@ -402,7 +405,7 @@ impl<R: Read> Parser<R> {
                     let call = MethodCall::new(expr, method, args);
                     expr = ExprNode::new(Expr::MethodCall(Box::new(call)));
                 }
-                Token::Char('(') | Token::Ident(_) | Token::Char('{') => {
+                Token::Char('(') | Token::String(_) | Token::Char('{') => {
                     let args = self.fnargs()?;
                     let call = FuncCall::new(expr, args);
                     expr = ExprNode::new(Expr::FuncCall(Box::new(call)));
@@ -432,7 +435,6 @@ impl<R: Read> Parser<R> {
             _ => return Ok(self.primaryexp()?)
         };
         self.next()?;
-        //println!("simple_expr => {:#?}", node);
         Ok(node)
     }
 
@@ -476,11 +478,7 @@ impl<R: Read> Parser<R> {
         self.next()?;
         let mut condition = self.expression()?;
         self.check_next(Token::Then)?;
-        let then = if self.token == Token::Break {
-            vec![StmtNode::new(Stmt::Break)]
-        } else {
-            self.block()?
-        };
+        let then = self.block()?;
         Ok(IfThenElse::new(condition, then, vec![]))
     }
 
@@ -488,6 +486,7 @@ impl<R: Read> Parser<R> {
     fn ifstat(&mut self, line: i32) -> Result<StmtNode> {
         debug_assert!(self.token == Token::If);
         let mut ifthen = self.test_then_block()?;
+        println!("ifstat:{:?}", self.token);
         let mut elseifs: Vec<IfThenElse> = vec![];
         while self.token == Token::Elseif {
             let mut elseif = self.test_then_block()?;
@@ -629,7 +628,6 @@ impl<R: Read> Parser<R> {
         } else {
             None
         };
-        self.next()?;
 
         let body = self.funcbody()?;
         let stmt = match method {
@@ -669,7 +667,6 @@ impl<R: Read> Parser<R> {
             vec![]
         };
         let stmt = Stmt::LocalAssign(namelist, exprlist);
-        println!("localstat= >{:?}", self.token);
         Ok(StmtNode::new(stmt))
     }
 
@@ -721,6 +718,7 @@ impl<R: Read> Parser<R> {
 
     fn check(&self, expect: Token) -> Result<()> {
         if self.token != expect {
+            panic!("======={}, expected: {:?}", self.line_number, expect);
             return Err(Error::SyntaxError(format!("{}:{}: {} expected",
                                                   self.source, self.line_number, expect.to_string())));
         }
