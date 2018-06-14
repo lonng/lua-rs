@@ -53,7 +53,7 @@ fn main() {
         b = a + 100
     ");
     */
-    let result = state.load_file("lua-tests/api.lua");
+    let result = state.load_file("_lua5.1-tests/verybig.lua");
     match result {
         Ok(_) => {}
         Err(e) => println!("Error=>{:?}", e)

@@ -477,6 +477,7 @@ impl<R: Read> Scanner<R> {
             let mut cvalue = c as u32;
             r = r * 10 + (cvalue - ('0' as u32));
             self.advance();
+            c = self.current;
             i = i + 1;
         }
         if r > (u8::MAX as u32) {
