@@ -4,6 +4,7 @@ use lua::state::State;
 
 fn main() {
     let mut state = State::new();
+    /*
     let result = state.load_string(r"
         --[[if hello and hello1 or hello2 and hello3 then
             if {
@@ -51,7 +52,8 @@ fn main() {
         a = 100
         b = a + 100
     ");
-    //let result = state.load_file("lua-tests/api.lua");
+    */
+    let result = state.load_file("lua-tests/api.lua");
     match result {
         Ok(_) => {}
         Err(e) => println!("Error=>{:?}", e)

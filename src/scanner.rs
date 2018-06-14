@@ -144,7 +144,7 @@ impl<R: Read> Scanner<R> {
 
                     self.advance();
                     if self.current == '[' {
-                        let sep = self.skip_separator();
+                        let sep = self.skip_sep();
                         if sep >= 0 {
                             self.read_multi_line(true, sep)?;
                             continue;
@@ -152,15 +152,12 @@ impl<R: Read> Scanner<R> {
                         self.buffer.clear();
                     }
 
-                    loop {
-                        if is_new_line(self.current) || self.current == EOF {
-                            break;
-                        }
+                    while !is_new_line(self.current) && self.current != EOF {
                         self.advance();
                     }
                 }
                 '[' => {
-                    let sep = self.skip_separator();
+                    let sep = self.skip_sep();
                     if sep >= 0 {
                         return Ok(Token::String(self.read_multi_line(false, sep)?));
                     }
@@ -227,7 +224,7 @@ impl<R: Read> Scanner<R> {
                     } else if c == '_' || c.is_ascii_alphabetic() {
                         loop {
                             self.save_and_advance();
-                            if !self.current.is_ascii_alphanumeric() {
+                            if self.current != '_' && !self.current.is_ascii_alphanumeric() {
                                 break;
                             }
                         }
@@ -285,23 +282,20 @@ impl<R: Read> Scanner<R> {
         // TODO: check lines too many?
     }
 
-    // TODO is this the right name?
-    fn skip_separator(&mut self) -> isize {
-        let mut i: isize = 0;
+    fn skip_sep(&mut self) -> isize {
+        let mut count: isize = 0;
         let c = self.current;
         debug_assert!(c == '[' || c == ']');
-        loop {
+        self.save_and_advance();
+        while self.current == '=' {
             self.save_and_advance();
-            if self.current != '=' {
-                break;
-            }
-            i = i + 1;
+            count += 1;
         }
         if self.current == c {
-            return i;
+            count
+        } else {
+            -count - 1
         }
-
-        -i - 1
     }
 
     fn buf_string(&self) -> Result<String> {
@@ -328,7 +322,7 @@ impl<R: Read> Scanner<R> {
                     }
                 }
                 ']' => {
-                    let sep2 = self.skip_separator();
+                    let sep2 = self.skip_sep();
                     let mut ret = String::new();
                     if sep == sep2 {
                         self.save_and_advance();
@@ -364,7 +358,7 @@ impl<R: Read> Scanner<R> {
         self.save_and_advance();
         loop {
             if self.current == delimiter {
-                break
+                break;
             }
 
             match self.current {
@@ -494,7 +488,7 @@ impl<R: Read> Scanner<R> {
     fn read_digits(&mut self) -> char {
         loop {
             if !is_decimal(self.current) {
-                break
+                break;
             }
             self.save_and_advance();
         }
