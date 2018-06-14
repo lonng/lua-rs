@@ -10,6 +10,7 @@ pub mod undump;
 pub mod instruction;
 pub mod ast;
 pub mod compiler;
+mod value;
 
 use std::io;
 use std::string;
@@ -23,6 +24,7 @@ pub enum Error {
     LexicalError(String),
     SyntaxError(String),
     Utf8Error,
+    CompileError(String),
 }
 
 impl From<io::Error> for Error {
