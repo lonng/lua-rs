@@ -1,3 +1,5 @@
+#![allow(non_snake_case)]
+
 use ::{Error, Result};
 use ast::*;
 use instruction::*;
@@ -52,13 +54,13 @@ struct AssignContext {
 type ConstValue = Node<Value>;
 
 struct Lblabels {
-    t: int,
-    f: int,
-    e: int,
+    t: i32,
+    f: i32,
+    e: i32,
     d: bool,
 }
 
-fn expr_ctx_none(opt: int) -> ExprContext {
+fn expr_ctx_none(opt: i32) -> ExprContext {
     ExprContext::new(ExprContextType::None, REG_UNDEFINED, 0)
 }
 
@@ -79,13 +81,17 @@ fn save_reg(ctx: &ExprContext, reg: i32) -> i32 {
 }
 
 fn is_vararg(expr: Expr) -> bool {
-    expr == Expr::Dots
+    if let Expr::Dots = expr {
+        true
+    } else {
+        false
+    }
 }
 
 struct CodeStore {
     codes: Vec<u32>,
     lines: Vec<i32>,
-    pc: i32,
+    pc: usize,
 }
 
 impl CodeStore {
@@ -95,6 +101,81 @@ impl CodeStore {
             lines: Vec::new(),
             pc: 0,
         }
+    }
+
+    pub fn add(&mut self, inst: Instruction, line: i32) {
+        let len = self.codes.len();
+        if len <= 0 || self.pc == len {
+            self.codes.push(inst);
+            self.lines.push(line);
+        } else {
+            let pc = self.pc;
+            self.codes[pc] = inst;
+            self.lines[pc] = line;
+        }
+        self.pc += 1;
+    }
+
+    pub fn add_ABC(&mut self, op: OpCode, a: i32, b: i32, c: i32, line: i32) {
+        self.add(ABC(op, a, b, c), line);
+    }
+
+    pub fn add_ABx(&mut self, op: OpCode, a: i32, bx: i32, line: i32) {
+        self.add(ABx(op, a, bx), line)
+    }
+
+    pub fn add_ASBx(&mut self, op: OpCode, a: i32, sbx: i32, line: i32) {
+        self.add(ASBx(op, a, sbx), line)
+    }
+
+    pub fn set_opcode(&mut self, pc: usize, op: OpCode) {
+        set_opcode(&mut self.codes[pc], op)
+    }
+
+    pub fn set_arga(&mut self, pc: usize, a: i32) {
+        set_arga(&mut self.codes[pc], a)
+    }
+
+    pub fn set_argb(&mut self, pc: usize, b: i32) {
+        set_argb(&mut self.codes[pc], b)
+    }
+
+    pub fn set_argc(&mut self, pc: usize, c: i32) {
+        set_argc(&mut self.codes[pc], c)
+    }
+
+    pub fn set_argbx(&mut self, pc: usize, bx: i32) {
+        set_argbx(&mut self.codes[pc], bx)
+    }
+
+    pub fn set_argsbx(&mut self, pc: usize, sbx: i32) {
+        set_argsbx(&mut self.codes[pc], sbx)
+    }
+
+    pub fn at(&self, pc: usize) -> Instruction {
+        self.codes[pc]
+    }
+
+    pub fn list(&self) -> &[Instruction] {
+        let pc = self.pc;
+        &self.codes[..pc]
+    }
+
+    pub fn line_list(&self) -> &[i32] {
+        let pc = self.pc;
+        &self.lines[..pc]
+    }
+
+    pub fn last_pc(&self) -> Instruction {
+        if self.pc == 0 {
+            INVALID_INSTRUCTION
+        } else {
+            self.codes[self.pc - 1]
+        }
+    }
+
+    pub fn pop(&mut self) {
+        self.pc -= 1
     }
 }
 

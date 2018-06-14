@@ -1,5 +1,7 @@
 #![allow(non_snake_case)]
 
+pub const INVALID_INSTRUCTION: u32 = 0xFFFFFFFF;
+
 type OpCodeSize = i32;
 
 pub const OPCODE_SIZE: OpCodeSize = 6;
