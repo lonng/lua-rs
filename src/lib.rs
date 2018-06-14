@@ -9,7 +9,7 @@ pub mod dump;
 pub mod undump;
 pub mod instruction;
 pub mod ast;
-pub mod compile;
+pub mod compiler;
 
 use std::io;
 use std::string;
