@@ -67,11 +67,11 @@ fn expr_ctx_none(opt: i32) -> ExprContext {
     ExprContext::new(ExprContextType::None, REG_UNDEFINED, 0)
 }
 
-fn start_line<T>(p: Node<T>) -> i32 {
+fn start_line<T>(p: &Node<T>) -> i32 {
     p.line()
 }
 
-fn end_line<T>(p: Node<T>) -> i32 {
+fn end_line<T>(p: &Node<T>) -> i32 {
     p.last_line()
 }
 
@@ -492,6 +492,44 @@ impl FunctionContext {
         let top = self.block.locals.last_index();
         self.set_reg_top(top);
         closed
+    }
+}
+
+fn compile_chunk(ctx: &mut FunctionContext, chunk: &Vec<StmtNode>) {
+    for stmt in chunk.iter() {
+        compile_stmt(ctx, stmt)
+    }
+}
+
+fn compile_block(ctx: &mut FunctionContext, block: &Vec<StmtNode>) {
+    if block.len() < 1 {
+        return;
+    }
+    let start_line = start_line(&block[0]);
+    let end_line = end_line(&block[block.len() - 1]);
+    ctx.enter_block(LABEL_NO_JUMP, start_line, end_line);
+    for stmt in block.iter() {
+        compile_stmt(ctx, stmt);
+    }
+    ctx.leave_block();
+}
+
+fn compile_stmt(ctx: &mut FunctionContext, stmt: &StmtNode) {
+    match stmt.inner() {
+        &Stmt::Assign(ref lhs, ref rhs) => unimplemented!(),
+        &Stmt::LocalAssign(ref names, ref values) => unimplemented!(),
+        &Stmt::FuncCall(ref call) => unimplemented!(),
+        &Stmt::MethodCall(ref call) => unimplemented!(),
+        &Stmt::DoBlock(ref stmts) => unimplemented!(),
+        &Stmt::While(ref cond, ref stmts) => unimplemented!(),
+        &Stmt::Repeat(ref cond, ref stmts) => unimplemented!(),
+        &Stmt::If(ref ifthenelse) => unimplemented!(),
+        &Stmt::NumberFor(ref name, ref init, ref limit, ref step, ref stmts) => unimplemented!(),
+        &Stmt::GenericFor(ref names, ref exprs, ref stmts) => unimplemented!(),
+        &Stmt::FuncDef(ref name, ref func) => unimplemented!(),
+        &Stmt::MethodDef(ref name, ref method) => unimplemented!(),
+        &Stmt::Return(ref exprs) => unimplemented!(),
+        &Stmt::Break => unimplemented!(),
     }
 }
 
