@@ -3,12 +3,14 @@
 use ::{Error, Result};
 use ast::*;
 use instruction::*;
+use std::collections::HashMap;
+use std::rc::Rc;
 use value::*;
 use vm::Chunk;
 
 const MAX_REGISTERS: i32 = 200;
 const REG_UNDEFINED: i32 = OPCODE_MAXA;
-const LABEL_NO_JUMP: i32 = 0;
+const LABEL_NO_JUMP: usize = 0;
 
 #[derive(Debug, Eq, PartialEq, Copy, Clone)]
 enum ExprContextType {
@@ -246,6 +248,174 @@ impl VariableTable {
     }
 }
 
+struct CodeBlock {
+    locals: VariableTable,
+    break_label: usize,
+    parent: Option<Rc<CodeBlock>>,
+    ref_upval: bool,
+    start_line: i32,
+    end_line: i32,
+}
+
+impl CodeBlock {
+    pub fn new(locals: VariableTable, break_label: usize,
+               parent: Option<Rc<CodeBlock>>,
+               start_line: i32, end_line: i32) -> Rc<CodeBlock> {
+        Rc::new(CodeBlock {
+            locals,
+            break_label,
+            parent,
+            ref_upval: false,
+            start_line,
+            end_line,
+        })
+    }
+}
+
+const VARARG_HAS: u8 = 1;
+const VARARG_IS: u8 = 2;
+const VARARG_NEED: u8 = 4;
+
+struct DebugLocalInfo {
+    name: String,
+    /// start pc
+    spc: usize,
+    /// end pc
+    epc: usize,
+}
+
+impl DebugLocalInfo {
+    pub fn new(name: String, spc: usize, epc: usize) -> DebugLocalInfo {
+        DebugLocalInfo {
+            name,
+            spc,
+            epc,
+        }
+    }
+}
+
+struct DebugCall {
+    name: String,
+    pc: usize,
+}
+
+impl DebugCall {
+    pub fn new(name: String, pc: usize) -> DebugCall {
+        DebugCall {
+            name,
+            pc,
+        }
+    }
+}
+
+struct FunctionProto {
+    source: String,
+    define_line: i32,
+    last_define_line: i32,
+    upval_count: u8,
+    param_count: u8,
+    is_vararg: u8,
+    used_registers: u8,
+    code: Vec<Instruction>,
+    constants: Vec<Rc<Value>>,
+    prototypes: Vec<Box<FunctionProto>>,
+
+    debug_pos: Vec<i32>,
+    debug_locals: Vec<Box<DebugLocalInfo>>,
+    debug_calls: Vec<DebugCall>,
+    debug_upval: Vec<String>,
+
+    str_constants: Vec<String>,
+}
+
+impl FunctionProto {
+    pub fn new(source: String) -> Box<FunctionProto> {
+        Box::new(FunctionProto {
+            source,
+            define_line: 0,
+            last_define_line: 0,
+            upval_count: 0,
+            param_count: 0,
+            is_vararg: 0,
+            used_registers: 2,
+            code: Vec::with_capacity(128),
+            constants: Vec::with_capacity(32),
+            prototypes: Vec::with_capacity(16),
+            debug_pos: Vec::with_capacity(128),
+            debug_locals: Vec::with_capacity(16),
+            debug_calls: Vec::with_capacity(128),
+            debug_upval: Vec::with_capacity(16),
+            str_constants: Vec::with_capacity(32),
+        })
+    }
+}
+
+struct FunctionContext {
+    proto: Box<FunctionProto>,
+    code: CodeStore,
+    parent: Option<Box<FunctionContext>>,
+    upval: VariableTable,
+    block: Rc<CodeBlock>,
+    blocks: Vec<Rc<CodeBlock>>,
+
+    reg_top: usize,
+    label_id: i32,
+    label_pc: HashMap<i32, usize>,
+}
+
+impl FunctionContext {
+    pub fn new(source: String, parent: Option<Box<FunctionContext>>) -> Box<FunctionContext> {
+        let mut ctx = FunctionContext {
+            proto: FunctionProto::new(source),
+            code: CodeStore::new(),
+            parent,
+            upval: VariableTable::new(0),
+            block: CodeBlock::new(VariableTable::new(0), LABEL_NO_JUMP, None, 0, 0),
+            blocks: Vec::new(),
+            reg_top: 0,
+            label_id: 1,
+            label_pc: HashMap::new(),
+        };
+        let blk = ctx.block.clone();
+        ctx.blocks.push(blk);
+        Box::new(ctx)
+    }
+
+    pub fn new_lable(&mut self) -> i32 {
+        let r = self.label_id;
+        self.label_id += 1;
+        r
+    }
+
+    pub fn set_label_pc(&mut self, label: i32, pc: usize) {
+        self.label_pc.insert(label, pc);
+    }
+
+    pub fn get_label_pc(&self, label: i32) -> usize {
+        self.label_pc[&label]
+    }
+
+    pub fn const_index(&mut self, value: &Rc<Value>) -> usize {
+        let v = self.proto.constants
+            .iter()
+            .enumerate()
+            .find(|x| x.1 == value)
+            .map(|x| x.0);
+
+        match v {
+            Some(v) => v,
+            None => {
+                self.proto.constants.push(value.clone());
+                let len = self.proto.constants.len() - 1;
+                if len > (OPCODE_MAXBx as usize) {
+                    panic!("{}:{} to many constants", self.proto.source, self.proto.define_line)
+                } else {
+                    len
+                }
+            }
+        }
+    }
+}
 
 pub fn compile(stmts: Vec<StmtNode>, name: String) -> Result<Box<Chunk>> {
     Ok(Chunk::new())
