@@ -179,6 +179,74 @@ impl CodeStore {
     }
 }
 
+struct Variable {
+    index: usize,
+    name: String,
+}
+
+impl Variable {
+    pub fn new(index: usize, name: String) -> Variable {
+        Variable {
+            index,
+            name,
+        }
+    }
+}
+
+struct VariableTable {
+    names: Vec<String>,
+    offset: usize,
+}
+
+impl VariableTable {
+    pub fn new(offset: usize) -> VariableTable {
+        VariableTable {
+            names: Vec::new(),
+            offset,
+        }
+    }
+
+    pub fn names(&self) -> &[String] {
+        &self.names
+    }
+
+    pub fn list(&self) -> Vec<Variable> {
+        self.names.
+            iter().
+            enumerate().
+            map(|(index, name)|
+                Variable::new(index + self.offset, name.clone())).
+            collect()
+    }
+
+    pub fn last_index(&self) -> usize {
+        self.offset + self.names.len()
+    }
+
+    pub fn find(&self, name: &String) -> Option<usize> {
+        match self.names.
+            iter().
+            enumerate().
+            find(|x| x.1 == name) {
+            Some((index, _)) => Some(self.offset + index),
+            None => None
+        }
+    }
+
+    pub fn register_unique(&mut self, name: String) -> usize {
+        match self.find(&name) {
+            Some(index) => index,
+            None => self.register(name),
+        }
+    }
+
+    pub fn register(&mut self, name: String) -> usize {
+        self.names.push(name);
+        self.names.len() - 1 + self.offset
+    }
+}
+
+
 pub fn compile(stmts: Vec<StmtNode>, name: String) -> Result<Box<Chunk>> {
     Ok(Chunk::new())
 }
