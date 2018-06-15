@@ -1,1 +1,1 @@
-lua-tests/*.lua linguist-language=Rust
+_lua5.1-tests/*.lua linguist-language=Rust
