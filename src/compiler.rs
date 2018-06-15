@@ -4,6 +4,7 @@ use ::{Error, Result};
 use ast::*;
 use instruction::*;
 use std::collections::HashMap;
+use std::mem::swap;
 use std::rc::Rc;
 use value::*;
 use vm::Chunk;
@@ -168,7 +169,11 @@ impl CodeStore {
         &self.lines[..pc]
     }
 
-    pub fn last_pc(&self) -> Instruction {
+    pub fn last_pc(&self) -> usize {
+        self.pc - 1
+    }
+
+    pub fn last(&self) -> Instruction {
         if self.pc == 0 {
             INVALID_INSTRUCTION
         } else {
@@ -251,24 +256,26 @@ impl VariableTable {
 struct CodeBlock {
     locals: VariableTable,
     break_label: usize,
-    parent: Option<Rc<CodeBlock>>,
+    parent: Option<Box<CodeBlock>>,
     ref_upval: bool,
     start_line: i32,
     end_line: i32,
 }
 
 impl CodeBlock {
-    pub fn new(locals: VariableTable, break_label: usize,
-               parent: Option<Rc<CodeBlock>>,
-               start_line: i32, end_line: i32) -> Rc<CodeBlock> {
-        Rc::new(CodeBlock {
+    pub fn new(locals: VariableTable, break_label: usize, start_line: i32, end_line: i32) -> Box<CodeBlock> {
+        Box::new(CodeBlock {
             locals,
             break_label,
-            parent,
+            parent: None,
             ref_upval: false,
             start_line,
             end_line,
         })
+    }
+
+    pub fn set_parent(&mut self, parent: Option<Box<CodeBlock>>) {
+        self.parent = parent;
     }
 }
 
@@ -285,12 +292,12 @@ struct DebugLocalInfo {
 }
 
 impl DebugLocalInfo {
-    pub fn new(name: String, spc: usize, epc: usize) -> DebugLocalInfo {
-        DebugLocalInfo {
+    pub fn new(name: String, spc: usize, epc: usize) -> Box<DebugLocalInfo> {
+        Box::new(DebugLocalInfo {
             name,
             spc,
             epc,
-        }
+        })
     }
 }
 
@@ -355,8 +362,7 @@ struct FunctionContext {
     code: CodeStore,
     parent: Option<Box<FunctionContext>>,
     upval: VariableTable,
-    block: Rc<CodeBlock>,
-    blocks: Vec<Rc<CodeBlock>>,
+    block: Box<CodeBlock>,
 
     reg_top: usize,
     label_id: i32,
@@ -370,14 +376,11 @@ impl FunctionContext {
             code: CodeStore::new(),
             parent,
             upval: VariableTable::new(0),
-            block: CodeBlock::new(VariableTable::new(0), LABEL_NO_JUMP, None, 0, 0),
-            blocks: Vec::new(),
+            block: CodeBlock::new(VariableTable::new(0), LABEL_NO_JUMP, 0, 0),
             reg_top: 0,
             label_id: 1,
             label_pc: HashMap::new(),
         };
-        let blk = ctx.block.clone();
-        ctx.blocks.push(blk);
         Box::new(ctx)
     }
 
@@ -414,6 +417,81 @@ impl FunctionContext {
                 }
             }
         }
+    }
+
+    pub fn reg_top(&self) -> usize {
+        self.reg_top
+    }
+
+    pub fn set_reg_top(&mut self, top: usize) {
+        self.reg_top = top;
+    }
+
+    pub fn register_local_var(&mut self, name: String) -> usize {
+        let ret = self.block.locals.register(name.clone());
+        self.proto.debug_locals.push(DebugLocalInfo::new(name, self.code.last_pc() + 1, 0));
+        let top = self.reg_top();
+        self.set_reg_top(top);
+        ret
+    }
+
+    pub fn find_local_var_and_block(&self, name: &String) -> Option<(usize, &Box<CodeBlock>)> {
+        let mut blk = &self.block;
+        loop {
+            let r = blk.locals.find(name);
+            match r {
+                Some(i) => return Some((i, blk)),
+                None => match blk.parent {
+                    Some(ref parent) => blk = parent,
+                    None => break
+                }
+            }
+        }
+        None
+    }
+
+    pub fn find_local_var(&self, name: &String) -> Option<usize> {
+        self.find_local_var_and_block(name).map(|x| x.0)
+    }
+
+    pub fn enter_block(&mut self, blabel: usize, start_line: i32, end_line: i32) {
+        let vtb = VariableTable::new(self.reg_top());
+        let mut blk = CodeBlock::new(vtb, blabel, start_line, end_line);
+        swap(&mut blk, &mut self.block);
+        self.block.set_parent(Some(blk));
+    }
+
+    pub fn close_upval(&mut self) -> Option<usize> {
+        if self.block.ref_upval {
+            match self.block.parent {
+                Some(ref p) => {
+                    let x = p.locals.last_index();
+                    self.code.add_ABC(OP_CLOSE, x as i32, 0, 0, self.block.end_line);
+                    Some(x)
+                }
+                None => None,
+            }
+        } else {
+            None
+        }
+    }
+
+    pub fn end_scope(&mut self) {
+        let last_pc = self.code.last_pc();
+        for vr in self.block.locals.list().iter() {
+            self.proto.debug_locals[vr.index].epc = last_pc;
+        }
+    }
+
+    pub fn leave_block(&mut self) -> Option<usize> {
+        let closed = self.close_upval();
+        self.end_scope();
+        let mut parent: Option<Box<CodeBlock>> = None; // swap replacement
+        swap(&mut self.block.parent, &mut parent);
+        self.block = parent.unwrap();
+        let top = self.block.locals.last_index();
+        self.set_reg_top(top);
+        closed
     }
 }
 
