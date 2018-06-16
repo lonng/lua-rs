@@ -10,7 +10,7 @@ use value::*;
 use vm::Chunk;
 
 const MAX_REGISTERS: i32 = 200;
-const REG_UNDEFINED: i32 = OPCODE_MAXA;
+const REG_UNDEFINED: usize = OPCODE_MAXA as usize;
 const LABEL_NO_JUMP: usize = 0;
 
 #[derive(Debug, Eq, PartialEq, Copy, Clone)]
@@ -27,7 +27,7 @@ enum ExprContextType {
 #[derive(Debug, Eq, PartialEq, Copy, Clone)]
 struct ExprContext {
     typ: ExprContextType,
-    reg: i32,
+    reg: usize,
     /// opt >= 0: wants varargopt+1 results, i.e  a = func()
     /// opt = -1: ignore results             i.e  func()
     /// opt = -2: receive all results        i.e  a = {func()}
@@ -35,7 +35,7 @@ struct ExprContext {
 }
 
 impl ExprContext {
-    pub fn new(typ: ExprContextType, reg: i32, opt: i32) -> ExprContext {
+    pub fn new(typ: ExprContextType, reg: usize, opt: i32) -> ExprContext {
         ExprContext {
             typ,
             reg,
@@ -47,11 +47,23 @@ impl ExprContext {
 #[derive(Debug, Eq, PartialEq, Copy, Clone)]
 struct AssignContext {
     expr_ctx: ExprContext,
-    keyrk: i32,
+    keyrk: usize,
     valrk: i32,
-    keyks: i32,
+    keyks: bool,
     /// need move
     nmove: bool,
+}
+
+impl AssignContext {
+    pub fn new(expr_ctx: ExprContext, keyrk: usize, valrk: i32, keyks: bool, nmove: bool) -> AssignContext {
+        AssignContext {
+            expr_ctx,
+            keyrk,
+            valrk,
+            keyks,
+            nmove,
+        }
+    }
 }
 
 type ConstValue = Node<Value>;
@@ -75,7 +87,7 @@ fn end_line<T>(p: &Node<T>) -> i32 {
     p.last_line()
 }
 
-fn save_reg(ctx: &ExprContext, reg: i32) -> i32 {
+fn save_reg(ctx: &ExprContext, reg: usize) -> usize {
     if ctx.typ != ExprContextType::Local || ctx.reg == REG_UNDEFINED {
         reg
     } else {
@@ -183,6 +195,33 @@ impl CodeStore {
 
     pub fn pop(&mut self) {
         self.pc -= 1
+    }
+
+    pub fn propagate_KMV(&mut self, top: usize, save: &mut usize, reg: &mut usize, inc: usize, loadk: bool) {
+        let lastinst = self.last();
+        if get_arga(lastinst) >= (top as i32) {
+            match get_opcode(lastinst) {
+                OP_LOADK => {
+                    // if check `LOADK`
+                    if loadk {
+                        let cindex = get_argbx(lastinst);
+                        if cindex <= opMaxIndexRk {
+                            self.pop();
+                            *save = rk_ask(cindex) as usize;
+                            return;
+                        }
+                    }
+                }
+                OP_MOVE => {
+                    self.pop();
+                    *save = get_argb(lastinst) as usize;
+                    return;
+                }
+                _ => {}
+            }
+        }
+        *save = *reg;
+        *reg += inc;
     }
 }
 
@@ -398,17 +437,17 @@ impl FunctionContext {
         self.label_pc[&label]
     }
 
-    pub fn const_index(&mut self, value: &Rc<Value>) -> usize {
+    pub fn const_index(&mut self, value: Rc<Value>) -> usize {
         let v = self.proto.constants
             .iter()
             .enumerate()
-            .find(|x| x.1 == value)
+            .find(|x| x.1 == &value)
             .map(|x| x.0);
 
         match v {
             Some(v) => v,
             None => {
-                self.proto.constants.push(value.clone());
+                self.proto.constants.push(value);
                 let len = self.proto.constants.len() - 1;
                 if len > (OPCODE_MAXBx as usize) {
                     panic!("{}:{} to many constants", self.proto.source, self.proto.define_line)
@@ -514,9 +553,102 @@ fn compile_block(ctx: &mut FunctionContext, block: &Vec<StmtNode>) {
     ctx.leave_block();
 }
 
+fn get_ident_reftype(ctx: &FunctionContext, name: &String) -> ExprContextType {
+    // local variable
+    match ctx.find_local_var(name) {
+        Some(_) => ExprContextType::Local,
+        None => {
+            // upvalue or global variable
+            let t = match ctx.parent {
+                Some(ref pctx) => get_ident_reftype(pctx, name),
+                None => ExprContextType::Global,
+            };
+
+            if t == ExprContextType::Local {
+                ExprContextType::Upval
+            } else {
+                ExprContextType::Global
+            }
+        }
+    }
+}
+
+fn compile_expr(ctx: &FunctionContext, reg: usize, expr: &ExprNode, expr_ctx: ExprContext) -> usize {
+    unimplemented!()
+}
+
+fn compile_expr_with_propagation(ctx: &mut FunctionContext, expr: &ExprNode, reg: &mut usize, save: &mut usize, loadk: bool) {
+    let incr = compile_expr(ctx, *reg, expr, expr_ctx_none(0));
+    match expr.inner() {
+        Expr::BinaryOp(BinaryOpr::And, _, _) | Expr::BinaryOp(BinaryOpr::Or, _, _) => {
+            *save = *reg;
+            *reg += incr;
+        }
+        _ => {
+            let top = ctx.reg_top();
+            ctx.code.propagate_KMV(top, save, reg, incr, loadk)
+        }
+    }
+}
+
+fn compile_expr_with_KMV_propagation(ctx: &mut FunctionContext, expr: &ExprNode, reg: &mut usize, save: &mut usize) {
+    compile_expr_with_propagation(ctx, expr, reg, save, true)
+}
+
+fn compile_expr_with_MV_propagation(ctx: &mut FunctionContext, expr: &ExprNode, reg: &mut usize, save: &mut usize) {
+    compile_expr_with_propagation(ctx, expr, reg, save, false)
+}
+
+fn compile_assign_stmt_left(ctx: &mut FunctionContext, lhs: &Vec<ExprNode>) -> (usize, Vec<AssignContext>) {
+    let mut reg = ctx.reg_top();
+    let len = lhs.len();
+    let mut acs = Vec::<AssignContext>::with_capacity(len);
+    for (i, expr) in lhs.iter().enumerate() {
+        let islast = i == len - 1;
+        match expr.inner() {
+            &Expr::Ident(ref s) => {
+                let identtype = get_ident_reftype(ctx, s);
+                let mut expr_ctx = ExprContext::new(identtype, REG_UNDEFINED, 0);
+                match identtype {
+                    ExprContextType::Global => {
+                        ctx.const_index(Rc::new(Value::String(s.clone())));
+                    }
+                    ExprContextType::Upval => {
+                        ctx.upval.register_unique(s.clone());
+                    }
+                    ExprContextType::Local => {
+                        if islast {
+                            // TODO: check
+                            expr_ctx.reg = ctx.find_local_var(s).unwrap();
+                        }
+                    }
+                    _ => unreachable!("invalid lhs identity type")
+                };
+                acs.push(AssignContext::new(expr_ctx, 0, 0, false, false))
+            }
+            &Expr::AttrGet(ref obj, ref key) => {
+                let mut expr_ctx = ExprContext::new(ExprContextType::Table, REG_UNDEFINED, 0);
+                compile_expr_with_KMV_propagation(ctx, obj, &mut reg, &mut expr_ctx.reg);
+                reg += compile_expr(ctx, reg, key, expr_ctx_none(0));
+                let keyks = if let Expr::String(_) = key.inner() { true } else { false };
+                let assi_ctx = AssignContext::new(expr_ctx, reg, 0, keyks, false);
+                acs.push(assi_ctx);
+            }
+            _ => unreachable!("invalid left expression")
+        }
+    };
+
+    (reg, acs)
+}
+
+fn compile_assign_stmt(ctx: &mut FunctionContext, lhs: &Vec<ExprNode>, rhs: &Vec<ExprNode>) {
+    let lhslen = lhs.len();
+    let (reg, acs) = compile_assign_stmt_left(ctx, lhs);
+}
+
 fn compile_stmt(ctx: &mut FunctionContext, stmt: &StmtNode) {
     match stmt.inner() {
-        &Stmt::Assign(ref lhs, ref rhs) => unimplemented!(),
+        &Stmt::Assign(ref lhs, ref rhs) => compile_assign_stmt(ctx, lhs, rhs),
         &Stmt::LocalAssign(ref names, ref values) => unimplemented!(),
         &Stmt::FuncCall(ref call) => unimplemented!(),
         &Stmt::MethodCall(ref call) => unimplemented!(),

@@ -705,7 +705,6 @@ impl<R: Read> Parser<R> {
     fn retstat(&mut self) -> Result<StmtNode> {
         debug_assert!(self.token == Token::Return);
         self.next()?; // skip RETURE
-        println!("retstat => {:?}", self.token);
         let exprlist = if self.block_follow() || self.token == Token::Char(';') {
             vec![]
         } else {
