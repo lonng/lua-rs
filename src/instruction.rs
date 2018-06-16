@@ -269,8 +269,8 @@ pub fn ASBx(op: OpCode, a: i32, sbx: i32) -> Instruction {
     inst
 }
 
-const opBitRk: OpCodeSize = 1 << (OPCODE_SIZEB - 1);
-const opMaxIndexRk: OpCodeSize = opBitRk - 1;
+pub const opBitRk: OpCodeSize = 1 << (OPCODE_SIZEB - 1);
+pub const opMaxIndexRk: OpCodeSize = opBitRk - 1;
 
 pub fn is_k(v: i32) -> bool {
     v & opBitRk != 0
