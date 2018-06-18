@@ -4,7 +4,7 @@ use ::{Error, Result};
 use ast::*;
 use instruction::*;
 use std::collections::HashMap;
-use std::mem::swap;
+use std::mem::{swap, replace};
 use std::rc::Rc;
 use value::*;
 use vm::Chunk;
@@ -240,6 +240,7 @@ impl Variable {
     }
 }
 
+#[derive(Debug, PartialEq)]
 struct VariableTable {
     names: Vec<String>,
     offset: usize,
@@ -293,6 +294,7 @@ impl VariableTable {
     }
 }
 
+#[derive(Debug, PartialEq)]
 struct CodeBlock {
     locals: VariableTable,
     break_label: usize,
@@ -316,6 +318,10 @@ impl CodeBlock {
 
     pub fn set_parent(&mut self, parent: Option<Box<CodeBlock>>) {
         self.parent = parent;
+    }
+
+    pub fn set_ref_upval(&mut self, b: bool) {
+        self.ref_upval = b;
     }
 }
 
@@ -475,12 +481,41 @@ impl<'p> FunctionContext<'p> {
         ret
     }
 
-    pub fn find_local_var_and_block(&self, name: &String) -> Option<(usize, &Box<CodeBlock>)> {
+    pub fn ref_local_var_or_upval(&mut self, name: &String) -> Option<usize> {
+        let mut blk = &self.block;
+        let mut slf = true;
+        let mut res = blk.locals.find(name);
+        let mut idx: Option<usize> = None;
+        loop {
+            match res {
+                Some(i) => {
+                    idx = Some(i);
+                    break;
+                }
+                None => match blk.parent {
+                    Some(ref parent) => {
+                        res = parent.locals.find(name);
+                        slf = false;
+                        blk = parent;
+                    }
+                    None => break
+                }
+            }
+        }
+        if !slf {
+            // TODO
+            //blk.set_ref_upval(true);
+            unimplemented!()
+        }
+        idx
+    }
+
+    pub fn find_local_var(&self, name: &String) -> Option<usize> {
         let mut blk = &self.block;
         loop {
             let r = blk.locals.find(name);
             match r {
-                Some(i) => return Some((i, blk)),
+                Some(i) => return Some(i),
                 None => match blk.parent {
                     Some(ref parent) => blk = parent,
                     None => break
@@ -488,10 +523,6 @@ impl<'p> FunctionContext<'p> {
             }
         }
         None
-    }
-
-    pub fn find_local_var(&self, name: &String) -> Option<usize> {
-        self.find_local_var_and_block(name).map(|x| x.0)
     }
 
     pub fn enter_block(&mut self, blabel: usize, start_line: i32, end_line: i32) {
@@ -663,20 +694,21 @@ fn compile_expr(ctx: &mut FunctionContext, reg: &mut usize, expr: &ExprNode, exp
             ctx.proto.prototypes.push(proto);
             ctx.code.add_ABx(OP_CLOSURE, svreg, protono as i32, start_line(expr));
             for upv in upvals.names() {
-                let inst = match ctx.find_local_var_and_block(upv) {
-                    Some((index, block)) => {
-                        //block.ref_upval = true;
-                        ABC(OP_MOVE, 0, index as i32, 0)
+                let (op, mut index) = match ctx.ref_local_var_or_upval(upv) {
+                    Some(index) => {
+                        (OP_MOVE, index as i32)
                     }
                     None => {
-                        let upvalindex = match ctx.upval.find(upv) {
-                            Some(i) => i,
-                            None => ctx.upval.register_unique(upv.clone())
-                        };
-                        ABC(OP_GETUPVAL, 0, upvalindex as i32, 0)
+                        match ctx.upval.find(upv) {
+                            Some(i) => (OP_GETUPVAL, i as i32),
+                            None => (OP_GETUPVAL, -1)
+                        }
                     }
                 };
-                ctx.code.add(inst, start_line(expr));
+                if index == -1 {
+                    index = ctx.upval.register_unique(upv.clone()) as i32;
+                }
+                ctx.code.add_ABC(op, 0, index, 0, start_line(expr));
             }
         }
     };
