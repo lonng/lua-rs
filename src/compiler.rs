@@ -8,6 +8,7 @@ use std::mem::swap;
 use std::rc::Rc;
 use value::*;
 use vm::Chunk;
+use std::borrow::BorrowMut;
 
 const MAX_REGISTERS: i32 = 200;
 const REG_UNDEFINED: usize = OPCODE_MAXA as usize;
@@ -396,10 +397,10 @@ impl FunctionProto {
     }
 }
 
-struct FunctionContext {
+struct FunctionContext<'p> {
     proto: Box<FunctionProto>,
     code: CodeStore,
-    parent: Option<Box<FunctionContext>>,
+    parent: Option<&'p FunctionContext<'p>>,
     upval: VariableTable,
     block: Box<CodeBlock>,
 
@@ -408,8 +409,8 @@ struct FunctionContext {
     label_pc: HashMap<i32, usize>,
 }
 
-impl FunctionContext {
-    pub fn new(source: String, parent: Option<Box<FunctionContext>>) -> Box<FunctionContext> {
+impl<'p> FunctionContext<'p> {
+    pub fn new(source: String, parent: Option<&'p FunctionContext>) -> Box<FunctionContext<'p>> {
         let mut ctx = FunctionContext {
             proto: FunctionProto::new(source),
             code: CodeStore::new(),
@@ -573,12 +574,117 @@ fn get_ident_reftype(ctx: &FunctionContext, name: &String) -> ExprContextType {
     }
 }
 
-fn compile_expr(ctx: &FunctionContext, reg: usize, expr: &ExprNode, expr_ctx: ExprContext) -> usize {
-    unimplemented!()
+fn compile_table_expr(ctx: &mut FunctionContext, reg: &mut usize, fields: &Vec<Field>, expr_ctx: &ExprContext) {}
+
+fn compile_fncall_expr(ctx: &mut FunctionContext, reg: &mut usize, fncall: &FuncCall, expr_ctx: &ExprContext) {}
+
+fn compile_mcall_expr(ctx: &mut FunctionContext, reg: &mut usize, mcall: &MethodCall, expr_ctx: &ExprContext) {}
+
+fn compile_binaryop_expr(ctx: &mut FunctionContext, reg: &mut usize, opr: &BinaryOpr, lhs: &ExprNode, rhs: &ExprNode, expr_ctx: &ExprContext) {}
+
+fn compile_unaryop_expr(ctx: &mut FunctionContext, reg: &mut usize, opr: &UnaryOpr, expr: &ExprNode, expr_ctx: &ExprContext) {}
+
+
+fn compile_expr(ctx: &mut FunctionContext, reg: &mut usize, expr: &ExprNode, expr_ctx: &ExprContext) -> usize {
+    let sreg = save_reg(expr_ctx, *reg);
+    let mut sused: usize = if sreg < *reg { 0 } else { 1 };
+    let svreg = sreg as i32;
+
+    // TODO: const value
+    match expr.inner() {
+        &Expr::True => ctx.code.add_ABC(OP_LOADBOOL, 1, 0, 0, start_line(expr)),
+        &Expr::False => ctx.code.add_ABC(OP_LOADBOOL, 0, 0, 0, start_line(expr)),
+        &Expr::Nil => ctx.code.add_ABC(OP_LOADNIL, svreg, svreg, 0, start_line(expr)),
+        &Expr::Number(f) => {
+            let num = ctx.const_index(Rc::new(Value::Number(f)));
+            ctx.code.add_ABx(OP_LOADBOOL, svreg, num as i32, start_line(expr))
+        }
+        &Expr::String(ref s) => {
+            let index = ctx.const_index(Rc::new(Value::String(s.clone())));
+            ctx.code.add_ABx(OP_LOADK, svreg, index as i32, start_line(expr))
+        }
+        &Expr::Dots => {
+            if ctx.proto.is_vararg == 0 {
+                panic!("cannot use '...' outside a vararg function")
+            }
+            ctx.proto.is_vararg &= !VARARG_NEED;
+            ctx.code.add_ABC(OP_VARARG, svreg, expr_ctx.opt + 2, 0, start_line(expr));
+            sused = if ctx.reg_top() > (expr_ctx.opt + 2) as usize || expr_ctx.opt < -1 {
+                0
+            } else {
+                (svreg + 1 + expr_ctx.opt) as usize - *reg
+            }
+        }
+        &Expr::Ident(ref s) => {
+            let identtype = get_ident_reftype(ctx, s);
+            match identtype {
+                ExprContextType::Global => {
+                    let index = ctx.const_index(Rc::new(Value::String(s.clone())));
+                    ctx.code.add_ABx(OP_LOADK, svreg, index as i32, start_line(expr))
+                }
+                ExprContextType::Upval => {
+                    let index = ctx.upval.register_unique(s.clone());
+                    ctx.code.add_ABC(OP_GETUPVAL, svreg, index as i32, 0, start_line(expr));
+                }
+                ExprContextType::Local => {
+                    let index = match ctx.find_local_var(s) {
+                        Some(i) => i as i32,
+                        None => -1
+                    };
+                    ctx.code.add_ABC(OP_MOVE, svreg, index, 0, start_line(expr));
+                }
+                _ => unreachable!()
+            }
+        }
+        &Expr::AttrGet(ref obj, ref key) => {
+            let a = svreg;
+            let mut b = reg.clone();
+            compile_expr_with_MV_propagation(ctx, obj, reg, &mut b);
+            let mut c = reg.clone();
+            compile_expr_with_KMV_propagation(ctx, key, reg, &mut c);
+            let opcode = if let &Expr::String(_) = key.inner() { OP_GETTABLEKS } else { OP_GETTABLE };
+            ctx.code.add_ABC(opcode, a, b as i32, c as i32, start_line(expr));
+        }
+        &Expr::Table(ref fields) => compile_table_expr(ctx, reg, fields, expr_ctx),
+        &Expr::FuncCall(ref call) => compile_fncall_expr(ctx, reg, call, expr_ctx),
+        &Expr::MethodCall(ref call) => compile_mcall_expr(ctx, reg, call, expr_ctx),
+        &Expr::BinaryOp(ref opr, ref lhs, ref rhs) => compile_binaryop_expr(ctx, reg, opr, lhs, rhs, expr_ctx),
+        &Expr::UnaryOp(ref opr, ref exp) => compile_unaryop_expr(ctx, reg, opr, exp, expr_ctx),
+        &Expr::Function(ref params, ref stmts) => {
+            let (proto, upvals) = {
+                let mut childctx = FunctionContext::new(ctx.proto.source.clone(), Some(ctx));
+                compile_func_expr(childctx.borrow_mut(), params, stmts, expr_ctx);
+                let mut upval = VariableTable::new(0);
+                swap(&mut childctx.upval, &mut upval);
+                (childctx.proto, upval)
+            };
+
+            let protono = ctx.proto.prototypes.len();
+            ctx.proto.prototypes.push(proto);
+            ctx.code.add_ABx(OP_CLOSURE, svreg, protono as i32, start_line(expr));
+            for upv in upvals.names() {
+                let inst = match ctx.find_local_var_and_block(upv) {
+                    Some((index, block)) => {
+                        //block.ref_upval = true;
+                        ABC(OP_MOVE, 0, index as i32, 0)
+                    }
+                    None => {
+                        let upvalindex = match ctx.upval.find(upv) {
+                            Some(i) => i,
+                            None => ctx.upval.register_unique(upv.clone())
+                        };
+                        ABC(OP_GETUPVAL, 0, upvalindex as i32, 0)
+                    }
+                };
+                ctx.code.add(inst, start_line(expr));
+            }
+        }
+    };
+    sused
 }
 
 fn compile_expr_with_propagation(ctx: &mut FunctionContext, expr: &ExprNode, reg: &mut usize, save: &mut usize, loadk: bool) {
-    let incr = compile_expr(ctx, *reg, expr, expr_ctx_none(0));
+    let incr = compile_expr(ctx, reg, expr, &expr_ctx_none(0));
     match expr.inner() {
         Expr::BinaryOp(BinaryOpr::And, _, _) | Expr::BinaryOp(BinaryOpr::Or, _, _) => {
             *save = *reg;
@@ -629,7 +735,7 @@ fn compile_assign_stmt_left(ctx: &mut FunctionContext, lhs: &Vec<ExprNode>) -> (
             &Expr::AttrGet(ref obj, ref key) => {
                 let mut expr_ctx = ExprContext::new(ExprContextType::Table, REG_UNDEFINED, 0);
                 compile_expr_with_KMV_propagation(ctx, obj, &mut reg, &mut expr_ctx.reg);
-                reg += compile_expr(ctx, reg, key, expr_ctx_none(0));
+                reg += compile_expr(ctx, &mut reg, key, &expr_ctx_none(0));
                 let keyks = if let Expr::String(_) = key.inner() { true } else { false };
                 let assi_ctx = AssignContext::new(expr_ctx, reg, 0, keyks, false);
                 acs.push(assi_ctx);
@@ -664,6 +770,8 @@ fn compile_stmt(ctx: &mut FunctionContext, stmt: &StmtNode) {
         &Stmt::Break => unimplemented!(),
     }
 }
+
+fn compile_func_expr(ctx: &mut FunctionContext, params: &ParList, stmts: &Vec<StmtNode>, expr_ctx: &ExprContext) {}
 
 pub fn compile(stmts: Vec<StmtNode>, name: String) -> Result<Box<Chunk>> {
     Ok(Chunk::new())
