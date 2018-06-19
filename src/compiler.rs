@@ -316,6 +316,16 @@ impl CodeBlock {
         })
     }
 
+    pub fn variable_block(&mut self, name: &String) -> Option<&mut CodeBlock> {
+        match self.locals.find(name) {
+            Some(_) => Some(self),
+            None => match self.parent {
+                Some(ref mut parent) => parent.variable_block(name),
+                None => None
+            }
+        }
+    }
+
     pub fn set_parent(&mut self, parent: Option<Box<CodeBlock>>) {
         self.parent = parent;
     }
@@ -479,35 +489,6 @@ impl<'p> FunctionContext<'p> {
         let top = self.reg_top();
         self.set_reg_top(top);
         ret
-    }
-
-    pub fn ref_local_var_or_upval(&mut self, name: &String) -> Option<usize> {
-        let mut blk = &self.block;
-        let mut slf = true;
-        let mut res = blk.locals.find(name);
-        let mut idx: Option<usize> = None;
-        loop {
-            match res {
-                Some(i) => {
-                    idx = Some(i);
-                    break;
-                }
-                None => match blk.parent {
-                    Some(ref parent) => {
-                        res = parent.locals.find(name);
-                        slf = false;
-                        blk = parent;
-                    }
-                    None => break
-                }
-            }
-        }
-        if !slf {
-            // TODO
-            //blk.set_ref_upval(true);
-            unimplemented!()
-        }
-        idx
     }
 
     pub fn find_local_var(&self, name: &String) -> Option<usize> {
@@ -694,9 +675,10 @@ fn compile_expr(ctx: &mut FunctionContext, reg: &mut usize, expr: &ExprNode, exp
             ctx.proto.prototypes.push(proto);
             ctx.code.add_ABx(OP_CLOSURE, svreg, protono as i32, start_line(expr));
             for upv in upvals.names() {
-                let (op, mut index) = match ctx.ref_local_var_or_upval(upv) {
-                    Some(index) => {
-                        (OP_MOVE, index as i32)
+                let (op, mut index) = match ctx.block.variable_block(upv) {
+                    Some(blk) => {
+                        blk.ref_upval = true;
+                        (OP_MOVE, blk.locals.find(upv).unwrap() as i32)
                     }
                     None => {
                         match ctx.upval.find(upv) {
