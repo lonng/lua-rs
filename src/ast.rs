@@ -81,8 +81,8 @@ pub enum Expr {
 
 #[derive(Debug)]
 pub struct Field {
-    key: Option<ExprNode>,
-    val: ExprNode,
+    pub key: Option<ExprNode>,
+    pub val: ExprNode,
 }
 
 impl Field {
