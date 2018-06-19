@@ -50,14 +50,14 @@ impl ExprContext {
 struct AssignContext {
     expr_ctx: ExprContext,
     keyrk: usize,
-    valrk: i32,
+    valrk: usize,
     keyks: bool,
     /// need move
     nmove: bool,
 }
 
 impl AssignContext {
-    pub fn new(expr_ctx: ExprContext, keyrk: usize, valrk: i32, keyks: bool, nmove: bool) -> AssignContext {
+    pub fn new(expr_ctx: ExprContext, keyrk: usize, valrk: usize, keyks: bool, nmove: bool) -> AssignContext {
         AssignContext {
             expr_ctx,
             keyrk,
@@ -1189,9 +1189,121 @@ fn compile_assign_stmt_left(ctx: &mut FunctionContext, lhs: &Vec<ExprNode>) -> (
     (reg, acs)
 }
 
+fn compile_assign_stmt_right(ctx: &mut FunctionContext, mut reg: usize,
+                             lhs: &Vec<ExprNode>,
+                             rhs: &Vec<ExprNode>,
+                             mut acs: Vec<AssignContext>) -> (usize, Vec<AssignContext>) {
+    let lennames = lhs.len();
+    let lenexprs = rhs.len();
+    let mut namesassigned = 0;
+    while namesassigned < lennames {
+        // multiple assign with vararg function
+        if is_vararg(rhs[namesassigned].inner()) && (lenexprs - namesassigned - 1) <= 0 {
+            let opt = lennames - namesassigned - 1;
+            let regstart = reg;
+            let incr = compile_expr(ctx, reg, &rhs[namesassigned], &expr_ctx_none(opt as i32));
+            reg += incr;
+            for i in namesassigned..(namesassigned + incr) {
+                acs[i].nmove = true;
+                if acs[i].expr_ctx.typ == ExprContextType::Table {
+                    acs[i].valrk = regstart + (1 - namesassigned);
+                }
+            }
+            namesassigned = lennames;
+            break;
+        }
+
+        // regular assignment
+        let mut ac = acs[namesassigned];
+        let mut nilexprs: Vec<ExprNode> = vec![];
+        let expr = if namesassigned >= lenexprs {
+            let mut expr = ExprNode::new(Expr::Nil);
+            expr.set_line(start_line(&lhs[namesassigned]));
+            expr.set_last_line(end_line(&lhs[namesassigned]));
+            nilexprs.push(expr);
+            &nilexprs[0]
+        } else {
+            &rhs[namesassigned]
+        };
+
+        let idx = reg;
+        let incr = compile_expr(ctx, reg, &expr, &ac.expr_ctx);
+        if ac.expr_ctx.typ == ExprContextType::Table {
+            match expr.inner() {
+                Expr::BinaryOp(BinaryOpr::And, _, _) | Expr::BinaryOp(BinaryOpr::Or, _, _) => {
+                    let regtop = ctx.reg_top();
+                    ctx.code.propagate_KMV(regtop, &mut ac.valrk, &mut reg, incr, true);
+                }
+                _ => {
+                    ac.valrk = idx;
+                    reg += incr;
+                }
+            }
+        } else {
+            ac.nmove = incr != 0;
+            reg += incr;
+        }
+        namesassigned += 1;
+    }
+
+    let rightreg = reg - 1;
+    for i in namesassigned..lenexprs {
+        let opt = if i != lenexprs - 1 { 0 } else { -1 };
+        reg += compile_expr(ctx, reg, &rhs[i], &expr_ctx_none(opt));
+    }
+    (rightreg, acs)
+}
+
 fn compile_assign_stmt(ctx: &mut FunctionContext, lhs: &Vec<ExprNode>, rhs: &Vec<ExprNode>) {
     let lhslen = lhs.len();
     let (reg, acs) = compile_assign_stmt_left(ctx, lhs);
+    let (mut reg, acs) = compile_assign_stmt_right(ctx, reg, lhs, rhs, acs);
+    for j in 0..lhslen {
+        let i = lhslen - 1 - j;
+        let expr = &lhs[i];
+        match acs[i].expr_ctx.typ {
+            ExprContextType::Local => {
+                if acs[i].nmove {
+                    if let Expr::Ident(ref s) = expr.inner() {
+                        let index = match ctx.find_local_var(s) {
+                            Some(i) => i as i32,
+                            None => -1
+                        };
+                        ctx.code.add_ABC(OP_MOVE, index, reg as i32, 0, start_line(expr));
+                        reg -= 1;
+                    } else {
+                        unreachable!()
+                    }
+                }
+            }
+            ExprContextType::Global => {
+                if let Expr::Ident(ref s) = expr.inner() {
+                    let index = ctx.const_index(Rc::new(Value::String(s.clone())));
+                    ctx.code.add_ABC(OP_MOVE, index as i32, reg as i32, 0, start_line(expr));
+                    reg -= 1;
+                } else {
+                    unreachable!()
+                }
+            }
+            ExprContextType::Upval => {
+                if let Expr::Ident(ref s) = expr.inner() {
+                    let index = ctx.upval.register_unique(s.clone());
+                    ctx.code.add_ABC(OP_MOVE, index as i32, reg as i32, 0, start_line(expr));
+                    reg -= 1;
+                } else {
+                    unreachable!()
+                }
+            }
+            ExprContextType::Table => {
+                let opcode = if acs[i].keyks { OP_SETTABLEKS } else { OP_SETTABLE };
+                ctx.code.add_ABC(opcode, acs[i].expr_ctx.reg as i32, acs[i].keyrk as i32, acs[i].valrk as i32, start_line(expr));
+                if is_k(acs[i].valrk as i32) {
+                    reg -= 1;
+                }
+            }
+            _ => {}
+        }
+    }
 }
 
 fn compile_stmt(ctx: &mut FunctionContext, stmt: &StmtNode) {
