@@ -3,16 +3,17 @@
 use ::{Error, Result};
 use ast::*;
 use instruction::*;
+use std::borrow::BorrowMut;
 use std::collections::HashMap;
-use std::mem::{swap, replace};
+use std::mem::{replace, swap};
 use std::rc::Rc;
 use value::*;
 use vm::Chunk;
-use std::borrow::BorrowMut;
 
 const MAX_REGISTERS: i32 = 200;
 const REG_UNDEFINED: usize = OPCODE_MAXA as usize;
 const LABEL_NO_JUMP: usize = 0;
+const FIELDS_PER_FLUSH: i32 = 50;
 
 #[derive(Debug, Eq, PartialEq, Copy, Clone)]
 enum ExprContextType {
@@ -96,12 +97,25 @@ fn save_reg(ctx: &ExprContext, reg: usize) -> usize {
     }
 }
 
-fn is_vararg(expr: Expr) -> bool {
-    if let Expr::Dots = expr {
+fn is_vararg(expr: &Expr) -> bool {
+    if let &Expr::Dots = expr {
         true
     } else {
         false
     }
+}
+
+fn int2fb(val: i32) -> i32 {
+    let mut e = 0;
+    let mut x = val;
+    while x >= 16 {
+        x = (x + 1) >> 1;
+        e += 1;
+    }
+    if x < 8 {
+        return x;
+    }
+    ((e + 1) << 3) | (x - 8)
 }
 
 struct CodeStore {
@@ -586,7 +600,68 @@ fn get_ident_reftype(ctx: &FunctionContext, name: &String) -> ExprContextType {
     }
 }
 
-fn compile_table_expr(ctx: &mut FunctionContext, reg: &mut usize, fields: &Vec<Field>, expr_ctx: &ExprContext) {}
+fn compile_table_expr(ctx: &mut FunctionContext, mut reg: usize, table: &ExprNode, expr_ctx: &ExprContext) {
+    let tablereg = reg;
+    reg += 1;
+    ctx.code.add_ABC(OP_NEWTABLE, tablereg as i32, 0, 0, start_line(table));
+    let tablepc = ctx.code.last_pc();
+    let regbase = reg;
+    if let Expr::Table(ref fields) = table.inner() {
+        let mut array_count = 0;
+        let mut lastvarargs = false;
+        let fieldlen = fields.len();
+        for (i, field) in fields.iter().enumerate() {
+            let islast = i == fieldlen - 1;
+            match field.key {
+                None => {
+                    if islast && is_vararg(field.val.inner()) {
+                        lastvarargs = true;
+                        reg += compile_expr(ctx, &mut reg, &field.val, &expr_ctx_none(-2));
+                    } else {
+                        array_count += 1;
+                        reg += compile_expr(ctx, &mut reg, &field.val, &expr_ctx_none(0))
+                    }
+                }
+                Some(ref expr) => {
+                    let regorg = reg;
+                    let mut b = reg;
+                    compile_expr_with_KMV_propagation(ctx, expr, &mut reg, &mut b);
+                    let mut c = reg;
+                    compile_expr_with_MV_propagation(ctx, expr, &mut reg, &mut c);
+                    let opcode = if let Expr::String(_) = expr.inner() { OP_SETTABLEKS } else { OP_SETTABLE };
+                    ctx.code.add_ABC(opcode, tablereg as i32, b as i32, c as i32, start_line(expr));
+                    reg = regorg;
+                }
+            }
+            let flush = array_count % FIELDS_PER_FLUSH;
+            if (array_count != 0 && (flush == 0 || islast)) || lastvarargs {
+                reg = regbase;
+                let num = if flush == 0 { FIELDS_PER_FLUSH } else { flush };
+                let mut c = (array_count - 1) / FIELDS_PER_FLUSH + 1;
+                let b = if islast && is_vararg(field.val.inner()) { 0 } else { num };
+                let line = match field.key {
+                    Some(ref expr) => start_line(expr),
+                    None => start_line(&field.val),
+                };
+                if c > 511 {
+                    c = 0;
+                }
+                ctx.code.add_ABC(OP_SETLIST, tablereg as i32, b as i32, c as i32, line);
+                if c == 0 {
+                    ctx.code.add(0, line);
+                }
+            }
+        }
+
+        ctx.code.set_argb(tablepc, int2fb(tablereg as i32));
+        ctx.code.set_argc(tablepc, int2fb((fieldlen - tablereg) as i32));
+        if expr_ctx.typ == ExprContextType::Local && expr_ctx.reg != tablereg {
+            ctx.code.add_ABC(OP_MOVE, expr_ctx.reg as i32, tablereg as i32, 0, start_line(table))
+        }
+    } else {
+        unreachable!()
+    }
+}
 
 fn compile_fncall_expr(ctx: &mut FunctionContext, reg: &mut usize, fncall: &FuncCall, expr_ctx: &ExprContext) {}
 
@@ -595,7 +670,6 @@ fn compile_mcall_expr(ctx: &mut FunctionContext, reg: &mut usize, mcall: &Method
 fn compile_binaryop_expr(ctx: &mut FunctionContext, reg: &mut usize, opr: &BinaryOpr, lhs: &ExprNode, rhs: &ExprNode, expr_ctx: &ExprContext) {}
 
 fn compile_unaryop_expr(ctx: &mut FunctionContext, reg: &mut usize, opr: &UnaryOpr, expr: &ExprNode, expr_ctx: &ExprContext) {}
-
 
 fn compile_expr(ctx: &mut FunctionContext, reg: &mut usize, expr: &ExprNode, expr_ctx: &ExprContext) -> usize {
     let sreg = save_reg(expr_ctx, *reg);
@@ -657,7 +731,7 @@ fn compile_expr(ctx: &mut FunctionContext, reg: &mut usize, expr: &ExprNode, exp
             let opcode = if let &Expr::String(_) = key.inner() { OP_GETTABLEKS } else { OP_GETTABLE };
             ctx.code.add_ABC(opcode, a, b as i32, c as i32, start_line(expr));
         }
-        &Expr::Table(ref fields) => compile_table_expr(ctx, reg, fields, expr_ctx),
+        &Expr::Table(ref fields) => compile_table_expr(ctx, *reg, expr, expr_ctx),
         &Expr::FuncCall(ref call) => compile_fncall_expr(ctx, reg, call, expr_ctx),
         &Expr::MethodCall(ref call) => compile_mcall_expr(ctx, reg, call, expr_ctx),
         &Expr::BinaryOp(ref opr, ref lhs, ref rhs) => compile_binaryop_expr(ctx, reg, opr, lhs, rhs, expr_ctx),
