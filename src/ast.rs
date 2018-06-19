@@ -146,9 +146,9 @@ impl MethodName {
 
 #[derive(Debug)]
 pub struct MethodCall {
-    receiver: ExprNode,
-    method: String,
-    args: Vec<ExprNode>,
+    pub receiver: ExprNode,
+    pub method: String,
+    pub args: Vec<ExprNode>,
 }
 
 impl MethodCall {
@@ -163,8 +163,8 @@ impl MethodCall {
 
 #[derive(Debug)]
 pub struct FuncCall {
-    func: ExprNode,
-    args: Vec<ExprNode>,
+    pub func: ExprNode,
+    pub args: Vec<ExprNode>,
 }
 
 impl FuncCall {
