@@ -99,10 +99,12 @@ fn expr_ctx_none(opt: i32) -> ExprContext {
 }
 
 fn start_line<T>(p: &Node<T>) -> u32 {
+    debug_assert!(p.line() != 0);
     p.line()
 }
 
 fn end_line<T>(p: &Node<T>) -> u32 {
+    debug_assert!(p.last_line() != 0);
     p.last_line()
 }
 
@@ -1784,7 +1786,7 @@ fn compile_func_expr(ctx: &mut FunctionContext, params: &ParList, stmts: &Vec<St
 }
 
 pub fn compile(stmts: Vec<StmtNode>, name: String) -> Result<Box<FunctionProto>> {
-    println!("{:#?}", stmts);
+    //println!("{:#?}", stmts);
     let mut ctx = FunctionContext::new(name, None);
     let mut par = ParList::new();
     par.set_vargs(true);
