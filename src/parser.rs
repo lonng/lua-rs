@@ -4,7 +4,6 @@ use scanner::{Scanner, Token};
 use state::State;
 use std::io::{BufReader, Read};
 use std::mem;
-use vm::Chunk;
 
 static BINARY_PRIORITY: &'static [(u8, u8)/*(left, right)*/; 15] = &[
     (6, 6), (6, 6), (7, 7), (7, 7), (7, 7), // `+' `-' `*' `/' `%'
@@ -275,7 +274,7 @@ impl<R: Read> Parser<R> {
             }
             self.next()?;
             if !self.testnext(&Token::Char(','))? {
-                break
+                break;
             }
         }
         Ok(names)
@@ -544,7 +543,8 @@ impl<R: Read> Parser<R> {
             ExprNode::new(Expr::Number(1.0))
         };
         let body = self.forbody()?;
-        Ok(StmtNode::new(Stmt::NumberFor(varname, init, limit, skip, body)))
+        let stmt = Stmt::NumberFor(NumberFor::new(varname, init, limit, skip, body));
+        Ok(StmtNode::new(stmt))
     }
 
     fn forlist(&mut self, indexname: String) -> Result<StmtNode> {
@@ -560,7 +560,8 @@ impl<R: Read> Parser<R> {
         self.check_next(Token::In)?;
         let exprs = self.exprlist()?;
         let body = self.forbody()?;
-        Ok(StmtNode::new(Stmt::GenericFor(names, exprs, body)))
+        let stmt = Stmt::GenericFor(GenericFor::new(names, exprs, body));
+        Ok(StmtNode::new(stmt))
     }
 
     /// ```BNF
@@ -636,12 +637,12 @@ impl<R: Read> Parser<R> {
         let body = self.funcbody()?;
         let stmt = match method {
             Some(m) => {
-                let name = MethodName::new(nameexpr, m);
-                Stmt::MethodDef(name, body)
+                let def = MethodDef::new(nameexpr, m, body);
+                Stmt::MethodDef(def)
             }
             None => {
-                let name = FuncName::new(nameexpr);
-                Stmt::FuncDef(name, body)
+                let def = FuncDef::new(nameexpr, body);
+                Stmt::FuncDef(def)
             }
         };
         Ok(StmtNode::new(stmt))
@@ -654,9 +655,8 @@ impl<R: Read> Parser<R> {
             return Err(self.unexpected(&self.token));
         };
         self.next()?;
-        let name = FuncName::new(nameexpr);
         let body = self.funcbody()?;
-        let stmt = Stmt::FuncDef(name, body);
+        let stmt = Stmt::FuncDef(FuncDef::new(nameexpr, body));
         Ok(StmtNode::new(stmt))
     }
 
