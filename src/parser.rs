@@ -50,7 +50,7 @@ pub fn binary_op(t: &Token) -> BinaryOpr {
 pub struct Parser<R> {
     source: String,
     scanner: Scanner<R>,
-    line_number: i32,
+    line_number: u32,
     token: Token,
     ahead_token: Token,
 }
@@ -485,7 +485,7 @@ impl<R: Read> Parser<R> {
     }
 
     /// ifstat -> IF cond THEN block {ELSEIF cond THEN block} [ELSE block] END
-    fn ifstat(&mut self, line: i32) -> Result<StmtNode> {
+    fn ifstat(&mut self, line: u32) -> Result<StmtNode> {
         debug_assert!(self.token == Token::If);
         let mut ifthen = self.test_then_block()?;
         let mut elseifs: Vec<IfThenElse> = vec![];
@@ -515,7 +515,7 @@ impl<R: Read> Parser<R> {
     /// ```BNF
     /// whilestat -> WHILE cond DO block END
     /// ```
-    fn whilestat(&mut self, line: i32) -> Result<StmtNode> {
+    fn whilestat(&mut self, line: u32) -> Result<StmtNode> {
         debug_assert!(self.token == Token::While);
         let line = self.line_number;
         self.next()?; // skip WHILE
@@ -567,7 +567,7 @@ impl<R: Read> Parser<R> {
     /// ```BNF
     /// forstat -> FOR (fornum | forlist) END
     /// ```
-    fn forstat(&mut self, line: i32) -> Result<StmtNode> {
+    fn forstat(&mut self, line: u32) -> Result<StmtNode> {
         debug_assert!(self.token == Token::For);
         let line = self.line_number;
         self.next()?; // skip FOR
@@ -589,7 +589,7 @@ impl<R: Read> Parser<R> {
     /// ```BNF
     /// repeatstat -> REPEAT block UNTIL cond
     /// ```
-    fn repeatstat(&mut self, line: i32) -> Result<StmtNode> {
+    fn repeatstat(&mut self, line: u32) -> Result<StmtNode> {
         debug_assert!(self.token == Token::Repeat);
         let line = self.line_number;
         self.next()?; // skip REPEAT
@@ -599,7 +599,7 @@ impl<R: Read> Parser<R> {
         Ok(StmtNode::new(Stmt::Repeat(cond, stmts)))
     }
 
-    fn funcstat(&mut self, line: i32) -> Result<StmtNode> {
+    fn funcstat(&mut self, line: u32) -> Result<StmtNode> {
         debug_assert!(self.token == Token::Function);
         self.next()?; // skip FUNCTION
 
@@ -728,7 +728,7 @@ impl<R: Read> Parser<R> {
         }
     }
 
-    fn check_match(&mut self, what: Token, who: Token, line: i32) -> Result<()> {
+    fn check_match(&mut self, what: Token, who: Token, line: u32) -> Result<()> {
         if !self.testnext(&what)? {
             let err = if line == self.line_number {
                 format!("{}:{}: {} expected", self.source, self.line_number, what.to_string())

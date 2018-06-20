@@ -98,11 +98,11 @@ fn expr_ctx_none(opt: i32) -> ExprContext {
     ExprContext::new(ExprContextType::None, REG_UNDEFINED, 0)
 }
 
-fn start_line<T>(p: &Node<T>) -> i32 {
+fn start_line<T>(p: &Node<T>) -> u32 {
     p.line()
 }
 
-fn end_line<T>(p: &Node<T>) -> i32 {
+fn end_line<T>(p: &Node<T>) -> u32 {
     p.last_line()
 }
 
@@ -137,7 +137,7 @@ fn int2fb(val: i32) -> i32 {
 
 struct CodeStore {
     codes: Vec<u32>,
-    lines: Vec<i32>,
+    lines: Vec<u32>,
     pc: usize,
 }
 
@@ -150,7 +150,7 @@ impl CodeStore {
         }
     }
 
-    pub fn add(&mut self, inst: Instruction, line: i32) {
+    pub fn add(&mut self, inst: Instruction, line: u32) {
         let len = self.codes.len();
         if len <= 0 || self.pc == len {
             self.codes.push(inst);
@@ -163,15 +163,15 @@ impl CodeStore {
         self.pc += 1;
     }
 
-    pub fn add_ABC(&mut self, op: OpCode, a: i32, b: i32, c: i32, line: i32) {
+    pub fn add_ABC(&mut self, op: OpCode, a: i32, b: i32, c: i32, line: u32) {
         self.add(ABC(op, a, b, c), line);
     }
 
-    pub fn add_ABx(&mut self, op: OpCode, a: i32, bx: i32, line: i32) {
+    pub fn add_ABx(&mut self, op: OpCode, a: i32, bx: i32, line: u32) {
         self.add(ABx(op, a, bx), line)
     }
 
-    pub fn add_ASBx(&mut self, op: OpCode, a: i32, sbx: i32, line: i32) {
+    pub fn add_ASBx(&mut self, op: OpCode, a: i32, sbx: i32, line: u32) {
         self.add(ASBx(op, a, sbx), line)
     }
 
@@ -208,7 +208,7 @@ impl CodeStore {
         Vec::from(&self.codes[..pc])
     }
 
-    pub fn line_list(&self) -> Vec<i32> {
+    pub fn line_list(&self) -> Vec<u32> {
         let pc = self.pc;
         Vec::from(&self.lines[..pc])
     }
@@ -331,12 +331,12 @@ struct CodeBlock {
     break_label: usize,
     parent: Option<Box<CodeBlock>>,
     ref_upval: bool,
-    start_line: i32,
-    end_line: i32,
+    start_line: u32,
+    end_line: u32,
 }
 
 impl CodeBlock {
-    pub fn new(locals: VariableTable, break_label: usize, start_line: i32, end_line: i32) -> Box<CodeBlock> {
+    pub fn new(locals: VariableTable, break_label: usize, start_line: u32, end_line: u32) -> Box<CodeBlock> {
         Box::new(CodeBlock {
             locals,
             break_label,
@@ -404,8 +404,8 @@ impl DebugCall {
 
 pub struct FunctionProto {
     source: String,
-    define_line: i32,
-    last_define_line: i32,
+    define_line: u32,
+    last_define_line: u32,
     upval_count: u8,
     param_count: u8,
     is_vararg: u8,
@@ -414,7 +414,7 @@ pub struct FunctionProto {
     constants: Vec<Rc<Value>>,
     prototypes: Vec<Box<FunctionProto>>,
 
-    debug_pos: Vec<i32>,
+    debug_pos: Vec<u32>,
     debug_locals: Vec<Box<DebugLocalInfo>>,
     debug_calls: Vec<DebugCall>,
     debug_upval: Vec<String>,
@@ -537,7 +537,7 @@ impl<'p> FunctionContext<'p> {
         None
     }
 
-    pub fn enter_block(&mut self, blabel: usize, start_line: i32, end_line: i32) {
+    pub fn enter_block(&mut self, blabel: usize, start_line: u32, end_line: u32) {
         let vtb = VariableTable::new(self.reg_top());
         let mut blk = CodeBlock::new(vtb, blabel, start_line, end_line);
         swap(&mut blk, &mut self.block);
@@ -768,7 +768,7 @@ fn compile_fncall_expr(ctx: &mut FunctionContext, mut reg: usize, expr: &ExprNod
 
 fn compile_binary_arith_expr(ctx: &mut FunctionContext, mut reg: usize,
                              opr: BinaryOpr, lhs: &ExprNode, rhs: &ExprNode,
-                             expr_ctx: &ExprContext, line: i32) {
+                             expr_ctx: &ExprContext, line: u32) {
     let a = save_reg(expr_ctx, reg);
     let mut b = reg;
     compile_expr_with_KMV_propagation(ctx, lhs, &mut reg, &mut b);
@@ -789,7 +789,7 @@ fn compile_binary_arith_expr(ctx: &mut FunctionContext, mut reg: usize,
 
 fn compile_binary_rel_expr_aux(ctx: &mut FunctionContext, mut reg: usize,
                                opr: BinaryOpr, lhs: &ExprNode, rhs: &ExprNode,
-                               flip: i32, jumplabel: i32, line: i32) {
+                               flip: i32, jumplabel: i32, line: u32) {
     let mut b = reg;
     compile_expr_with_KMV_propagation(ctx, lhs, &mut reg, &mut b);
     let mut c = reg;
@@ -810,7 +810,7 @@ fn compile_binary_rel_expr_aux(ctx: &mut FunctionContext, mut reg: usize,
 
 fn compile_binary_rel_expr(ctx: &mut FunctionContext, mut reg: usize,
                            opr: BinaryOpr, lhs: &ExprNode, rhs: &ExprNode,
-                           expr_ctx: &ExprContext, line: i32) {
+                           expr_ctx: &ExprContext, line: u32) {
     let a = save_reg(expr_ctx, reg);
     let jumplabel = ctx.new_lable();
     compile_binary_rel_expr_aux(ctx, reg, opr, lhs, rhs, 1, jumplabel, line);
@@ -917,7 +917,7 @@ fn compile_binary_log_expr_aux(ctx: &mut FunctionContext, mut reg: usize,
 
 fn compile_binary_log_expr(ctx: &mut FunctionContext, mut reg: usize,
                            opr: BinaryOpr, lhs: &ExprNode, rhs: &ExprNode,
-                           expr_ctx: &ExprContext, line: i32) {
+                           expr_ctx: &ExprContext, line: u32) {
     let a = save_reg(expr_ctx, reg);
     let endlabel = ctx.new_lable();
     let mut lb = Lblabels::new(ctx.new_lable(), ctx.new_lable(), endlabel, false);
@@ -1312,7 +1312,7 @@ fn compile_assign_stmt(ctx: &mut FunctionContext, lhs: &Vec<ExprNode>, rhs: &Vec
 }
 
 fn compile_reg_assignment(ctx: &mut FunctionContext, names: &Vec<String>, exprs: &Vec<ExprNode>,
-                          mut reg: usize, nvars: usize, line: i32) {
+                          mut reg: usize, nvars: usize, line: u32) {
     let lennames = names.len();
     let lenexprs = exprs.len();
 
@@ -1346,7 +1346,7 @@ fn compile_reg_assignment(ctx: &mut FunctionContext, names: &Vec<String>, exprs:
     }
 }
 
-fn compile_local_assign_stmt(ctx: &mut FunctionContext, names: &Vec<String>, values: &Vec<ExprNode>, line: i32) {
+fn compile_local_assign_stmt(ctx: &mut FunctionContext, names: &Vec<String>, values: &Vec<ExprNode>, line: u32) {
     let reg = ctx.reg_top();
     if names.len() == 1 && values.len() == 1 {
         if let Expr::Function(ref params, ref stmts) = values[0].inner() {
@@ -1413,7 +1413,7 @@ fn compile_branch_condition(ctx: &mut FunctionContext, mut reg: usize, expr: &Ex
 }
 
 fn compile_while_stmt(ctx: &mut FunctionContext, cond: &ExprNode, stmts: &Vec<StmtNode>,
-                      star_line: i32, end_line: i32) {
+                      star_line: u32, end_line: u32) {
     let thenlabel = ctx.new_lable();
     let elselabel = ctx.new_lable();
     let condlabel = ctx.new_lable();
@@ -1434,7 +1434,7 @@ fn compile_while_stmt(ctx: &mut FunctionContext, cond: &ExprNode, stmts: &Vec<St
 }
 
 fn compile_repeat_stmt(ctx: &mut FunctionContext, cond: &ExprNode, stmts: &Vec<StmtNode>,
-                       star_line: i32, end_line: i32) {
+                       star_line: u32, end_line: u32) {
     let initlabel = ctx.new_lable();
     let thenlabel = ctx.new_lable();
     let elselabel = ctx.new_lable();
@@ -1466,7 +1466,7 @@ fn compile_repeat_stmt(ctx: &mut FunctionContext, cond: &ExprNode, stmts: &Vec<S
     }
 }
 
-fn compile_if_stmt(ctx: &mut FunctionContext, ifelsethen: &IfThenElse, startline: i32, endline: i32) {
+fn compile_if_stmt(ctx: &mut FunctionContext, ifelsethen: &IfThenElse, startline: u32, endline: u32) {
     let thenlabel = ctx.new_lable();
     let elselabel = ctx.new_lable();
     let endlabel = ctx.new_lable();
@@ -1489,7 +1489,7 @@ fn compile_if_stmt(ctx: &mut FunctionContext, ifelsethen: &IfThenElse, startline
     }
 }
 
-fn compile_nfor_stmt(ctx: &mut FunctionContext, nfor: &NumberFor, startline: i32, endline: i32) {
+fn compile_nfor_stmt(ctx: &mut FunctionContext, nfor: &NumberFor, startline: u32, endline: u32) {
     let endlabel = ctx.new_lable();
     let mut expr_ctx = expr_ctx_none(0);
 
@@ -1523,7 +1523,7 @@ fn compile_nfor_stmt(ctx: &mut FunctionContext, nfor: &NumberFor, startline: i32
     ctx.code.set_argsbx(bodypc, (flpc - bodypc) as i32);
 }
 
-fn compile_gfor_stmt(ctx: &mut FunctionContext, gfor: &GenericFor, startline: i32, endline: i32) {
+fn compile_gfor_stmt(ctx: &mut FunctionContext, gfor: &GenericFor, startline: u32, endline: u32) {
     let endlabel = ctx.new_lable();
     let bodylable = ctx.new_lable();
     let fllabel = ctx.new_lable();
@@ -1556,7 +1556,7 @@ fn compile_gfor_stmt(ctx: &mut FunctionContext, gfor: &GenericFor, startline: i3
     ctx.set_label_pc(endlabel, lastpc);
 }
 
-fn compile_return_stmt(ctx: &mut FunctionContext, exprs: &Vec<ExprNode>, startline: i32, endline: i32) {
+fn compile_return_stmt(ctx: &mut FunctionContext, exprs: &Vec<ExprNode>, startline: u32, endline: u32) {
     let lenexprs = exprs.len();
     let mut reg = ctx.reg_top();
     let a = reg;
@@ -1594,7 +1594,7 @@ fn compile_return_stmt(ctx: &mut FunctionContext, exprs: &Vec<ExprNode>, startli
     ctx.code.add_ABC(OP_RETURN, a as i32, count as i32, 0, startline);
 }
 
-fn compile_break_stmt(ctx: &mut FunctionContext, startline: i32) {
+fn compile_break_stmt(ctx: &mut FunctionContext, startline: u32) {
     let mut blk = &ctx.block;
     loop {
         let label = blk.break_label;
@@ -1738,7 +1738,7 @@ fn patchcode(ctx: &mut FunctionContext) {
 }
 
 fn compile_func_expr(ctx: &mut FunctionContext, params: &ParList, stmts: &Vec<StmtNode>,
-                     expr_ctx: &ExprContext, startline: i32, endline: i32) {
+                     expr_ctx: &ExprContext, startline: u32, endline: u32) {
     ctx.proto.define_line = startline;
     ctx.proto.last_define_line = endline;
     if params.names.len() > (MAX_REGISTERS as usize) {
@@ -1784,6 +1784,7 @@ fn compile_func_expr(ctx: &mut FunctionContext, params: &ParList, stmts: &Vec<St
 }
 
 pub fn compile(stmts: Vec<StmtNode>, name: String) -> Result<Box<FunctionProto>> {
+    println!("{:#?}", stmts);
     let mut ctx = FunctionContext::new(name, None);
     let mut par = ParList::new();
     par.set_vargs(true);

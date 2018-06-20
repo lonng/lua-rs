@@ -107,7 +107,7 @@ fn is_hexadecimal(c: char) -> bool {
 pub struct Scanner<R> {
     reader: BufReader<R>,
     buffer: BytesMut,
-    line_number: i32,
+    line_number: u32,
     current: char,
 }
 
@@ -121,7 +121,7 @@ impl<R: Read> Scanner<R> {
         }
     }
 
-    pub fn line_number(&self) -> i32 {
+    pub fn line_number(&self) -> u32 {
         self.line_number
     }
 
