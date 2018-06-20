@@ -50,6 +50,7 @@ pub fn binary_op(t: &Token) -> BinaryOpr {
 pub struct Parser<R> {
     source: String,
     scanner: Scanner<R>,
+    prev_number: u32,
     line_number: u32,
     token: Token,
     ahead_token: Token,
@@ -60,7 +61,8 @@ impl<R: Read> Parser<R> {
         Parser {
             source: name,
             scanner: Scanner::new(reader),
-            line_number: 0,
+            prev_number: 1,
+            line_number: 1,
             token: Token::EOF,
             ahead_token: Token::EOF,
         }
@@ -135,7 +137,7 @@ impl<R: Read> Parser<R> {
     }
 
     fn next(&mut self) -> Result<()> {
-        self.line_number = self.scanner.line_number();
+        self.prev_number = self.line_number;
         self.token = match self.ahead_token {
             Token::EOF => self.scanner.scan()?,
             _ => {
@@ -144,7 +146,8 @@ impl<R: Read> Parser<R> {
                 ahead
             }
         };
-        //println!("token:{} => {:?}", self.line_number, self.token);
+        self.line_number = self.scanner.line_number();
+        //println!("<{}>: {} => {:?}", self.line_number, self.token);
         Ok(())
     }
 
@@ -190,18 +193,18 @@ impl<R: Read> Parser<R> {
         }
         let line = self.line_number;
         // is not last statement
-        let stmt = match self.token {
-            Token::If => self.ifstat(line)?,
-            Token::While => self.whilestat(line)?,
+        let mut stmt = match self.token {
+            Token::If => self.ifstat()?,
+            Token::While => self.whilestat()?,
             Token::Do => {
                 self.next()?;
                 let stmts = self.block()?;
                 self.check_match(Token::End, Token::Do, line)?;
                 StmtNode::new(Stmt::DoBlock(stmts))
             }
-            Token::For => self.forstat(line)?,
-            Token::Repeat => self.repeatstat(line)?,
-            Token::Function => self.funcstat(line)?,
+            Token::For => self.forstat()?,
+            Token::Repeat => self.repeatstat()?,
+            Token::Function => self.funcstat()?,
             Token::Local => {
                 self.next()?;
                 if self.testnext(&Token::Function)? {
@@ -214,6 +217,8 @@ impl<R: Read> Parser<R> {
             Token::Break => self.breakstat()?,
             _ => self.exprstat()?
         };
+        stmt.set_line(line);
+        stmt.set_last_line(self.prev_number);
         Ok(stmt)
     }
 
@@ -321,7 +326,8 @@ impl<R: Read> Parser<R> {
     /// prefixexp -> NAME | '(' expr ')'
     /// ```
     fn prefixexp(&mut self) -> Result<ExprNode> {
-        let expr = match self.token {
+        let line = self.line_number;
+        let mut expr = match self.token {
             Token::Ident(ref s) => {
                 let expr = ExprNode::new(Expr::Ident(s.clone()));
                 expr
@@ -335,6 +341,8 @@ impl<R: Read> Parser<R> {
             }
             _ => return Err(self.unexpected(&self.token))
         };
+        expr.set_line(line);
+        expr.set_last_line(self.line_number);
         self.next()?;
         Ok(expr)
     }
@@ -357,7 +365,10 @@ impl<R: Read> Parser<R> {
             Token::Char('{') => vec![self.constructor()?],
             Token::String(ref s) => {
                 next = true;
-                vec![ExprNode::new(Expr::Ident(s.clone()))]
+                let mut expr = ExprNode::new(Expr::Ident(s.clone()));
+                expr.set_line(line);
+                expr.set_last_line(self.line_number);
+                vec![expr]
             }
             _ => return Err(Error::SyntaxError("function arguments expected".to_string()))
         };
@@ -374,6 +385,7 @@ impl<R: Read> Parser<R> {
     /// prefixexp { '.' NAME | '[' exp `]' | ':' NAME funcargs | funcargs }
     /// ```
     fn primaryexp(&mut self) -> Result<ExprNode> {
+        let line = self.line_number;
         let mut expr = self.prefixexp()?;
         loop {
             match self.token {
@@ -412,7 +424,11 @@ impl<R: Read> Parser<R> {
                     let call = FuncCall::new(expr, args);
                     expr = ExprNode::new(Expr::FuncCall(Box::new(call)));
                 }
-                _ => return Ok(expr)
+                _ => {
+                    expr.set_line(line);
+                    expr.set_last_line(self.prev_number);
+                    return Ok(expr)
+                }
             };
         }
     }
@@ -451,8 +467,6 @@ impl<R: Read> Parser<R> {
         } else {
             self.simple_expr()?
         };
-        expr.set_line(line);
-        expr.set_last_line(self.line_number);
 
         let mut op = binary_op(&self.token);
         loop {
@@ -463,6 +477,8 @@ impl<R: Read> Parser<R> {
             let line = self.line_number;
             let sub = self.sub_expression(BINARY_PRIORITY[op as usize].0)?;
             let mut node = ExprNode::new(Expr::BinaryOp(op, Box::new(expr), Box::new(sub.0)));
+
+            // TODO: needs?
             node.set_line(line);
             node.set_last_line(self.line_number);
 
@@ -470,6 +486,8 @@ impl<R: Read> Parser<R> {
             op = sub.1;
         }
 
+        expr.set_line(line);
+        expr.set_last_line(self.line_number);
         Ok((expr, op))
     }
 
@@ -485,8 +503,9 @@ impl<R: Read> Parser<R> {
     }
 
     /// ifstat -> IF cond THEN block {ELSEIF cond THEN block} [ELSE block] END
-    fn ifstat(&mut self, line: u32) -> Result<StmtNode> {
+    fn ifstat(&mut self) -> Result<StmtNode> {
         debug_assert!(self.token == Token::If);
+        let line = self.line_number;
         let mut ifthen = self.test_then_block()?;
         let mut elseifs: Vec<IfThenElse> = vec![];
         while self.token == Token::Elseif {
@@ -515,7 +534,7 @@ impl<R: Read> Parser<R> {
     /// ```BNF
     /// whilestat -> WHILE cond DO block END
     /// ```
-    fn whilestat(&mut self, line: u32) -> Result<StmtNode> {
+    fn whilestat(&mut self) -> Result<StmtNode> {
         debug_assert!(self.token == Token::While);
         let line = self.line_number;
         self.next()?; // skip WHILE
@@ -567,7 +586,7 @@ impl<R: Read> Parser<R> {
     /// ```BNF
     /// forstat -> FOR (fornum | forlist) END
     /// ```
-    fn forstat(&mut self, line: u32) -> Result<StmtNode> {
+    fn forstat(&mut self) -> Result<StmtNode> {
         debug_assert!(self.token == Token::For);
         let line = self.line_number;
         self.next()?; // skip FOR
@@ -589,7 +608,7 @@ impl<R: Read> Parser<R> {
     /// ```BNF
     /// repeatstat -> REPEAT block UNTIL cond
     /// ```
-    fn repeatstat(&mut self, line: u32) -> Result<StmtNode> {
+    fn repeatstat(&mut self) -> Result<StmtNode> {
         debug_assert!(self.token == Token::Repeat);
         let line = self.line_number;
         self.next()?; // skip REPEAT
@@ -599,7 +618,7 @@ impl<R: Read> Parser<R> {
         Ok(StmtNode::new(Stmt::Repeat(cond, stmts)))
     }
 
-    fn funcstat(&mut self, line: u32) -> Result<StmtNode> {
+    fn funcstat(&mut self) -> Result<StmtNode> {
         debug_assert!(self.token == Token::Function);
         self.next()?; // skip FUNCTION
 
