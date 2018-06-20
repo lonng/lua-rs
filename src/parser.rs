@@ -720,11 +720,12 @@ impl<R: Read> Parser<R> {
     }
 
     fn check(&self, expect: Token) -> Result<()> {
-        if self.token != expect {
-            return Err(Error::SyntaxError(format!("{}:{}: {} expected",
-                                                  self.source, self.line_number, expect.to_string())));
+        if self.token == expect {
+            Ok(())
+        } else {
+            let s = format!("{}:{}: {} expected", self.source, self.line_number, expect.to_string());
+            Err(Error::SyntaxError(s))
         }
-        Ok(())
     }
 
     fn check_match(&mut self, what: Token, who: Token, line: i32) -> Result<()> {

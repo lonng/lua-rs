@@ -1,16 +1,31 @@
+use std::fmt::{Debug, Error, Formatter};
+
+pub struct LineInfo(i32, i32);
+
+impl ToString for LineInfo {
+    fn to_string(&self) -> String {
+        format!("{}:{}", self.0, self.1)
+    }
+}
+
+impl Debug for LineInfo {
+    fn fmt(&self, f: &mut Formatter) -> Result<(), Error> {
+        write!(f, "({:?}, {:?})", self.0, self.1)
+    }
+}
+
 /// Node represents a node in abstract syntax tree
 #[derive(Debug)]
 pub struct Node<T> {
-    line: i32,
-    last_line: i32,
+    /// line info: (begin_line, end_line)
+    line: LineInfo,
     inner: T,
 }
 
 impl<T> Node<T> {
     pub fn new(inner: T) -> Node<T> {
         Node {
-            line: 0,
-            last_line: 0,
+            line: LineInfo(0, 0),
             inner,
         }
     }
@@ -19,10 +34,10 @@ impl<T> Node<T> {
         &self.inner
     }
 
-    pub fn line(&self) -> i32 { self.line }
-    pub fn set_line(&mut self, line: i32) { self.line = line }
-    pub fn last_line(&self) -> i32 { self.last_line }
-    pub fn set_last_line(&mut self, line: i32) { self.last_line = line }
+    pub fn line(&self) -> i32 { self.line.0 }
+    pub fn set_line(&mut self, line: i32) { self.line.0 = line }
+    pub fn last_line(&self) -> i32 { self.line.1 }
+    pub fn set_last_line(&mut self, line: i32) { self.line.1 = line }
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
