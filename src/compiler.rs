@@ -518,7 +518,7 @@ impl<'p> FunctionContext<'p> {
         let ret = self.block.locals.register(name.clone());
         self.proto.debug_locals.push(DebugLocalInfo::new(name, self.code.last_pc() + 1, 0));
         let top = self.reg_top();
-        self.set_reg_top(top);
+        self.set_reg_top(top + 1);
         ret
     }
 
