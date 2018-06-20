@@ -4,8 +4,6 @@ pub mod state;
 pub mod scanner;
 pub mod parser;
 pub mod vm;
-pub mod config;
-pub mod dump;
 pub mod undump;
 pub mod instruction;
 pub mod ast;
