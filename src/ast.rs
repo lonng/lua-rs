@@ -1,31 +1,16 @@
-use std::fmt::{Debug, Error, Formatter};
-
-pub struct LineInfo(i32, i32);
-
-impl ToString for LineInfo {
-    fn to_string(&self) -> String {
-        format!("{}:{}", self.0, self.1)
-    }
-}
-
-impl Debug for LineInfo {
-    fn fmt(&self, f: &mut Formatter) -> Result<(), Error> {
-        write!(f, "({:?}, {:?})", self.0, self.1)
-    }
-}
+use std::fmt::{Debug, Formatter, Error};
 
 /// Node represents a node in abstract syntax tree
-#[derive(Debug)]
 pub struct Node<T> {
     /// line info: (begin_line, end_line)
-    line: LineInfo,
+    line: (u32, u32),
     inner: T,
 }
 
 impl<T> Node<T> {
     pub fn new(inner: T) -> Node<T> {
         Node {
-            line: LineInfo(0, 0),
+            line: (0, 0),
             inner,
         }
     }
@@ -34,10 +19,16 @@ impl<T> Node<T> {
         &self.inner
     }
 
-    pub fn line(&self) -> i32 { self.line.0 }
-    pub fn set_line(&mut self, line: i32) { self.line.0 = line }
-    pub fn last_line(&self) -> i32 { self.line.1 }
-    pub fn set_last_line(&mut self, line: i32) { self.line.1 = line }
+    pub fn line(&self) -> u32 { self.line.0 }
+    pub fn set_line(&mut self, line: u32) { self.line.0 = line }
+    pub fn last_line(&self) -> u32 { self.line.1 }
+    pub fn set_last_line(&mut self, line: u32) { self.line.1 = line }
+}
+
+impl<T: Debug> Debug for Node<T> {
+    fn fmt(&self, f: &mut Formatter) -> Result<(), Error> {
+        write!(f, "<{}:{}> {:#?}", self.line.0, self.line.1, self.inner)
+    }
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
