@@ -91,8 +91,8 @@ impl Field {
 
 #[derive(Debug)]
 pub struct ParList {
-    vargs: bool,
-    names: Vec<String>,
+    pub vargs: bool,
+    pub names: Vec<String>,
 }
 
 impl ParList {
@@ -117,30 +117,35 @@ impl ParList {
 }
 
 #[derive(Debug)]
-pub struct FuncName {
-    func: ExprNode,
+pub struct FuncDef {
+    pub name: Vec<ExprNode>,
+    pub body: Vec<ExprNode>,
 }
 
-impl FuncName {
-    pub fn new(func: ExprNode) -> FuncName {
-        FuncName {
-            func
-        }
+impl FuncDef {
+    pub fn new(name: ExprNode, body: ExprNode) -> Box<FuncDef> {
+        // TODO: refactor this
+        Box::new(FuncDef {
+            name: vec![name],
+            body: vec![body],
+        })
     }
 }
 
 #[derive(Debug)]
-pub struct MethodName {
-    receiver: ExprNode,
-    method: String,
+pub struct MethodDef {
+    pub receiver: ExprNode,
+    pub method: String,
+    pub body: ExprNode,
 }
 
-impl MethodName {
-    pub fn new(receiver: ExprNode, method: String) -> MethodName {
-        MethodName {
+impl MethodDef {
+    pub fn new(receiver: ExprNode, method: String, body: ExprNode) -> Box<MethodDef> {
+        Box::new(MethodDef {
             receiver,
             method,
-        }
+            body,
+        })
     }
 }
 
@@ -178,9 +183,9 @@ impl FuncCall {
 
 #[derive(Debug)]
 pub struct IfThenElse {
-    condition: ExprNode,
-    then: Vec<StmtNode>,
-    els: Vec<StmtNode>,
+    pub condition: ExprNode,
+    pub then: Vec<StmtNode>,
+    pub els: Vec<StmtNode>,
 }
 
 impl IfThenElse {
@@ -198,6 +203,44 @@ impl IfThenElse {
 }
 
 #[derive(Debug)]
+pub struct NumberFor {
+    pub name: String,
+    pub init: ExprNode,
+    pub limit: ExprNode,
+    pub step: ExprNode,
+    pub stmts: Vec<StmtNode>,
+}
+
+impl NumberFor {
+    pub fn new(name: String, init: ExprNode, limit: ExprNode, step: ExprNode, stmts: Vec<StmtNode>) -> Box<NumberFor> {
+        Box::new(NumberFor {
+            name,
+            init,
+            limit,
+            step,
+            stmts,
+        })
+    }
+}
+
+#[derive(Debug)]
+pub struct GenericFor {
+    pub names: Vec<String>,
+    pub exprs: Vec<ExprNode>,
+    pub stmts: Vec<StmtNode>,
+}
+
+impl GenericFor {
+    pub fn new(names: Vec<String>, exprs: Vec<ExprNode>, stmts: Vec<StmtNode>) -> Box<GenericFor> {
+        Box::new(GenericFor {
+            names,
+            exprs,
+            stmts,
+        })
+    }
+}
+
+#[derive(Debug)]
 pub enum Stmt {
     /// Assign(Lhs, Rhs)
     Assign(Vec<ExprNode>, Vec<ExprNode>),
@@ -206,7 +249,6 @@ pub enum Stmt {
     LocalAssign(Vec<String>, Vec<ExprNode>),
     FuncCall(ExprNode),
     MethodCall(ExprNode),
-
     DoBlock(Vec<StmtNode>),
 
     /// While(Condition, Stmts)
@@ -214,21 +256,11 @@ pub enum Stmt {
 
     /// Repeat(Condition, Stmts)
     Repeat(ExprNode, Vec<StmtNode>),
-
-    /// If(Condition, Then, Else)
     If(IfThenElse),
-
-    /// NumberFor(Name, Init, Limit, Step, Stmts)
-    NumberFor(String, ExprNode, ExprNode, ExprNode, Vec<StmtNode>),
-
-    /// GenericFor(Names, Exprs, Stmts)
-    GenericFor(Vec<String>, Vec<ExprNode>, Vec<StmtNode>),
-
-    /// FuncDef(Name, Func)
-    FuncDef(FuncName, ExprNode),
-
-    /// MethodDef(Name, Func)
-    MethodDef(MethodName, ExprNode),
+    NumberFor(Box<NumberFor>),
+    GenericFor(Box<GenericFor>),
+    FuncDef(Box<FuncDef>),
+    MethodDef(Box<MethodDef>),
     Return(Vec<ExprNode>),
     Break,
 }

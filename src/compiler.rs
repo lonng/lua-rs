@@ -8,7 +8,6 @@ use std::collections::HashMap;
 use std::mem::{replace, swap};
 use std::rc::Rc;
 use value::*;
-use vm::Chunk;
 
 const MAX_REGISTERS: i32 = 200;
 const REG_UNDEFINED: usize = OPCODE_MAXA as usize;
@@ -43,6 +42,12 @@ impl ExprContext {
             reg,
             opt,
         }
+    }
+
+    pub fn update(&mut self, typ: ExprContextType, reg: usize, opt: i32) {
+        self.typ = typ;
+        self.reg = reg;
+        self.opt = opt;
     }
 }
 
@@ -198,14 +203,14 @@ impl CodeStore {
         self.codes[pc]
     }
 
-    pub fn list(&self) -> &[Instruction] {
+    pub fn list(&self) -> Vec<Instruction> {
         let pc = self.pc;
-        &self.codes[..pc]
+        Vec::from(&self.codes[..pc])
     }
 
-    pub fn line_list(&self) -> &[i32] {
+    pub fn line_list(&self) -> Vec<i32> {
         let pc = self.pc;
-        &self.lines[..pc]
+        Vec::from(&self.lines[..pc])
     }
 
     pub fn last_pc(&self) -> usize {
@@ -280,8 +285,8 @@ impl VariableTable {
         }
     }
 
-    pub fn names(&self) -> &[String] {
-        &self.names
+    pub fn names(&self) -> Vec<String> {
+        self.names.clone()
     }
 
     pub fn list(&self) -> Vec<Variable> {
@@ -397,7 +402,7 @@ impl DebugCall {
     }
 }
 
-struct FunctionProto {
+pub struct FunctionProto {
     source: String,
     define_line: i32,
     last_define_line: i32,
@@ -784,7 +789,7 @@ fn compile_binary_arith_expr(ctx: &mut FunctionContext, mut reg: usize,
 
 fn compile_binary_rel_expr_aux(ctx: &mut FunctionContext, mut reg: usize,
                                opr: BinaryOpr, lhs: &ExprNode, rhs: &ExprNode,
-                               expr_ctx: &ExprContext, flip: i32, jumplabel: i32, line: i32) {
+                               flip: i32, jumplabel: i32, line: i32) {
     let mut b = reg;
     compile_expr_with_KMV_propagation(ctx, lhs, &mut reg, &mut b);
     let mut c = reg;
@@ -808,7 +813,7 @@ fn compile_binary_rel_expr(ctx: &mut FunctionContext, mut reg: usize,
                            expr_ctx: &ExprContext, line: i32) {
     let a = save_reg(expr_ctx, reg);
     let jumplabel = ctx.new_lable();
-    compile_binary_rel_expr_aux(ctx, reg, opr, lhs, rhs, expr_ctx, 1, jumplabel, line);
+    compile_binary_rel_expr_aux(ctx, reg, opr, lhs, rhs, 1, jumplabel, line);
     ctx.code.add_ABC(OP_LOADBOOL, a as i32, 0, 1, line);
     let lastpc = ctx.code.last_pc();
     ctx.set_label_pc(jumplabel, lastpc);
@@ -890,7 +895,7 @@ fn compile_binary_log_expr_aux(ctx: &mut FunctionContext, mut reg: usize,
                 jumplabel = lb.f;
                 lb.b = true;
             }
-            compile_binary_rel_expr_aux(ctx, reg, *opr, lhs, rhs, expr_ctx, flip, jumplabel, start_line(expr));
+            compile_binary_rel_expr_aux(ctx, reg, *opr, lhs, rhs, flip, jumplabel, start_line(expr));
         }
         _ => {
             if !hasnextcond && thenlabel == elselabel {
@@ -1093,7 +1098,7 @@ fn compile_expr(ctx: &mut FunctionContext, mut reg: usize, expr: &ExprNode, expr
         &Expr::Function(ref params, ref stmts) => {
             let (proto, upvals) = {
                 let mut childctx = FunctionContext::new(ctx.proto.source.clone(), Some(ctx));
-                compile_func_expr(childctx.borrow_mut(), params, stmts, expr_ctx);
+                compile_func_expr(childctx.borrow_mut(), params, stmts, expr_ctx, start_line(expr), end_line(expr));
                 let mut upval = VariableTable::new(0);
                 swap(&mut childctx.upval, &mut upval);
                 (childctx.proto, upval)
@@ -1102,7 +1107,7 @@ fn compile_expr(ctx: &mut FunctionContext, mut reg: usize, expr: &ExprNode, expr
             let protono = ctx.proto.prototypes.len();
             ctx.proto.prototypes.push(proto);
             ctx.code.add_ABx(OP_CLOSURE, svreg, protono as i32, start_line(expr));
-            for upv in upvals.names() {
+            for upv in &upvals.names {
                 let (op, mut index) = match ctx.block.variable_block(upv) {
                     Some(blk) => {
                         blk.ref_upval = true;
@@ -1306,27 +1311,482 @@ fn compile_assign_stmt(ctx: &mut FunctionContext, lhs: &Vec<ExprNode>, rhs: &Vec
     }
 }
 
-fn compile_stmt(ctx: &mut FunctionContext, stmt: &StmtNode) {
-    match stmt.inner() {
-        &Stmt::Assign(ref lhs, ref rhs) => compile_assign_stmt(ctx, lhs, rhs),
-        &Stmt::LocalAssign(ref names, ref values) => unimplemented!(),
-        &Stmt::FuncCall(ref call) => unimplemented!(),
-        &Stmt::MethodCall(ref call) => unimplemented!(),
-        &Stmt::DoBlock(ref stmts) => unimplemented!(),
-        &Stmt::While(ref cond, ref stmts) => unimplemented!(),
-        &Stmt::Repeat(ref cond, ref stmts) => unimplemented!(),
-        &Stmt::If(ref ifthenelse) => unimplemented!(),
-        &Stmt::NumberFor(ref name, ref init, ref limit, ref step, ref stmts) => unimplemented!(),
-        &Stmt::GenericFor(ref names, ref exprs, ref stmts) => unimplemented!(),
-        &Stmt::FuncDef(ref name, ref func) => unimplemented!(),
-        &Stmt::MethodDef(ref name, ref method) => unimplemented!(),
-        &Stmt::Return(ref exprs) => unimplemented!(),
-        &Stmt::Break => unimplemented!(),
+fn compile_reg_assignment(ctx: &mut FunctionContext, names: &Vec<String>, exprs: &Vec<ExprNode>,
+                          mut reg: usize, nvars: usize, line: i32) {
+    let lennames = names.len();
+    let lenexprs = exprs.len();
+
+    let mut namesassigned = 0;
+    let mut expr_ctx = expr_ctx_none(0);
+    while namesassigned < lennames && namesassigned < lenexprs {
+        if is_vararg(exprs[namesassigned].inner()) && (lenexprs - namesassigned - 1) <= 0 {
+            let opt = nvars - namesassigned;
+            expr_ctx.update(ExprContextType::Vararg, reg, (opt - 1) as i32);
+            compile_expr(ctx, reg, &exprs[namesassigned], &expr_ctx);
+            reg += opt;
+            namesassigned = lennames;
+        } else {
+            expr_ctx.update(ExprContextType::Local, reg, 0);
+            compile_expr(ctx, reg, &exprs[namesassigned], &expr_ctx);
+            reg += 1;
+            namesassigned += 1;
+        }
+    }
+
+    if lennames > namesassigned {
+        let left = lennames - namesassigned - 1;
+        ctx.code.add_ABC(OP_LOADNIL, reg as i32, (reg + left) as i32, 0, line);
+        reg += left;
+    }
+
+    for i in namesassigned..lenexprs {
+        let opt = if i != lenexprs - 1 { 0 } else { -1 };
+        expr_ctx.update(ExprContextType::None, reg, opt);
+        reg += compile_expr(ctx, reg, &exprs[i], &expr_ctx);
     }
 }
 
-fn compile_func_expr(ctx: &mut FunctionContext, params: &ParList, stmts: &Vec<StmtNode>, expr_ctx: &ExprContext) {}
+fn compile_local_assign_stmt(ctx: &mut FunctionContext, names: &Vec<String>, values: &Vec<ExprNode>, line: i32) {
+    let reg = ctx.reg_top();
+    if names.len() == 1 && values.len() == 1 {
+        if let Expr::Function(ref params, ref stmts) = values[0].inner() {
+            ctx.register_local_var(names[0].clone());
+            compile_reg_assignment(ctx, names, values, reg, names.len(), line);
+            return;
+        }
+    }
 
-pub fn compile(stmts: Vec<StmtNode>, name: String) -> Result<Box<Chunk>> {
-    Ok(Chunk::new())
+    compile_reg_assignment(ctx, names, values, reg, names.len(), line);
+    for name in names {
+        ctx.register_local_var(name.clone());
+    }
+}
+
+fn compile_branch_condition(ctx: &mut FunctionContext, mut reg: usize, expr: &ExprNode,
+                            thenlabel: i32, elselabel: i32, hasnextcond: bool) {
+    let startline = start_line(expr);
+    let (flip, jumplabel) = if hasnextcond { (1, thenlabel) } else { (0, elselabel) };
+    match expr.inner() {
+        &Expr::False | &Expr::Nil => {
+            if !hasnextcond {
+                ctx.code.add_ASBx(OP_JMP, 0, elselabel, startline);
+            }
+        }
+        &Expr::True | &Expr::Number(_) | &Expr::String(_) => {
+            if !hasnextcond {
+                return;
+            }
+        }
+        &Expr::BinaryOp(BinaryOpr::And, ref lhs, ref rhs) => {
+            let nextcondlabel = ctx.new_lable();
+            compile_branch_condition(ctx, reg, lhs, nextcondlabel, elselabel, false);
+            let lastpc = ctx.code.last_pc();
+            ctx.set_label_pc(nextcondlabel, lastpc);
+            compile_branch_condition(ctx, reg, rhs, thenlabel, elselabel, hasnextcond);
+            return;
+        }
+        &Expr::BinaryOp(BinaryOpr::Or, ref lhs, ref rhs) => {
+            let nextcondlabel = ctx.new_lable();
+            compile_branch_condition(ctx, reg, lhs, thenlabel, nextcondlabel, true);
+            let lastpc = ctx.code.last_pc();
+            ctx.set_label_pc(nextcondlabel, lastpc);
+            compile_branch_condition(ctx, reg, rhs, thenlabel, elselabel, hasnextcond);
+            return;
+        }
+        &Expr::BinaryOp(ref opr, ref lhs, ref rhs)
+        if opr == &BinaryOpr::Eq ||
+            opr == &BinaryOpr::LT ||
+            opr == &BinaryOpr::LE ||
+            opr == &BinaryOpr::NE ||
+            opr == &BinaryOpr::GT ||
+            opr == &BinaryOpr::GE => {
+            compile_binary_rel_expr_aux(ctx, reg, *opr, lhs, rhs, flip, jumplabel, startline);
+            return;
+        }
+        _ => {}
+    }
+
+    let mut a = reg;
+    compile_expr_with_MV_propagation(ctx, expr, &mut reg, &mut a);
+    ctx.code.add_ABC(OP_TEST, a as i32, 0, 0 ^ flip, startline);
+    ctx.code.add_ASBx(OP_JMP, 0, jumplabel, startline)
+}
+
+fn compile_while_stmt(ctx: &mut FunctionContext, cond: &ExprNode, stmts: &Vec<StmtNode>,
+                      star_line: i32, end_line: i32) {
+    let thenlabel = ctx.new_lable();
+    let elselabel = ctx.new_lable();
+    let condlabel = ctx.new_lable();
+
+    let lastpc = ctx.code.last_pc();
+    ctx.set_label_pc(condlabel, lastpc);
+    let regtop = ctx.reg_top();
+    compile_branch_condition(ctx, regtop, cond, thenlabel, elselabel, false);
+    let lastpc = ctx.code.last_pc();
+    ctx.set_label_pc(thenlabel, lastpc);
+    ctx.enter_block(elselabel as usize, star_line, end_line);
+    compile_chunk(ctx, stmts);
+    ctx.close_upval();
+    ctx.code.add_ASBx(OP_JMP, 0, condlabel as i32, end_line);
+    ctx.leave_block();
+    let lastpc = ctx.code.last_pc();
+    ctx.set_label_pc(elselabel, lastpc);
+}
+
+fn compile_repeat_stmt(ctx: &mut FunctionContext, cond: &ExprNode, stmts: &Vec<StmtNode>,
+                       star_line: i32, end_line: i32) {
+    let initlabel = ctx.new_lable();
+    let thenlabel = ctx.new_lable();
+    let elselabel = ctx.new_lable();
+
+    let lastpc = ctx.code.last_pc();
+    ctx.set_label_pc(initlabel, lastpc);
+    ctx.set_label_pc(elselabel, lastpc);
+
+    ctx.enter_block(thenlabel as usize, star_line, end_line);
+    compile_chunk(ctx, stmts);
+    let regtop = ctx.reg_top();
+    compile_branch_condition(ctx, regtop, cond, thenlabel, elselabel, false);
+
+    let lastpc = ctx.code.last_pc();
+    ctx.set_label_pc(thenlabel, lastpc);
+
+    match ctx.leave_block() {
+        Some(n) => {
+            let label = ctx.new_lable();
+            ctx.code.add_ASBx(OP_JMP, 0, label, end_line);
+            let lastpc = ctx.code.last_pc();
+            ctx.set_label_pc(elselabel, lastpc);
+            ctx.code.add_ABC(OP_CLOSE, n as i32, 0, 0, end_line);
+            ctx.code.add_ASBx(OP_JMP, 0, initlabel, end_line);
+            let lastpc = ctx.code.last_pc();
+            ctx.set_label_pc(label, lastpc);
+        }
+        None => {}
+    }
+}
+
+fn compile_if_stmt(ctx: &mut FunctionContext, ifelsethen: &IfThenElse, startline: i32, endline: i32) {
+    let thenlabel = ctx.new_lable();
+    let elselabel = ctx.new_lable();
+    let endlabel = ctx.new_lable();
+
+    let regtop = ctx.reg_top();
+    compile_branch_condition(ctx, regtop, &ifelsethen.condition, thenlabel, elselabel, false);
+    let lastpc = ctx.code.last_pc();
+    ctx.set_label_pc(thenlabel, lastpc);
+    compile_block(ctx, &ifelsethen.then);
+    if ifelsethen.els.len() > 0 {
+        ctx.code.add_ASBx(OP_JMP, 0, endlabel, startline)
+    }
+
+    let lastpc = ctx.code.last_pc();
+    ctx.set_label_pc(elselabel, lastpc);
+    if ifelsethen.els.len() > 0 {
+        compile_block(ctx, &ifelsethen.els);
+        let lastpc = ctx.code.last_pc();
+        ctx.set_label_pc(endlabel, lastpc);
+    }
+}
+
+fn compile_nfor_stmt(ctx: &mut FunctionContext, nfor: &NumberFor, startline: i32, endline: i32) {
+    let endlabel = ctx.new_lable();
+    let mut expr_ctx = expr_ctx_none(0);
+
+    ctx.enter_block(endlabel as usize, startline, endline);
+    let regtop = ctx.reg_top();
+    let rindex = ctx.register_local_var(String::from("(for index)"));
+    expr_ctx.update(ExprContextType::Local, rindex, 0);
+    compile_expr(ctx, regtop, &nfor.init, &expr_ctx);
+
+    let regtop = ctx.reg_top();
+    let rlimit = ctx.register_local_var(String::from("(for limit)"));
+    expr_ctx.update(ExprContextType::Local, rlimit, 0);
+    compile_expr(ctx, regtop, &nfor.limit, &expr_ctx);
+
+    let regtop = ctx.reg_top();
+    let rstep = ctx.register_local_var(String::from("(for step)"));
+    expr_ctx.update(ExprContextType::Local, rstep, 0);
+    compile_expr(ctx, regtop, &nfor.step, &expr_ctx);
+
+    ctx.code.add_ASBx(OP_FORPREP, rindex as i32, 0, startline);
+    ctx.register_local_var(nfor.name.clone());
+
+    let bodypc = ctx.code.last_pc();
+    compile_block(ctx, &nfor.stmts);
+    ctx.leave_block();
+    let flpc = ctx.code.last_pc();
+    ctx.code.add_ASBx(OP_FORLOOP, rindex as i32, (bodypc - (flpc + 1)) as i32, startline);
+
+    let lastpc = ctx.code.last_pc();
+    ctx.set_label_pc(endlabel, lastpc);
+    ctx.code.set_argsbx(bodypc, (flpc - bodypc) as i32);
+}
+
+fn compile_gfor_stmt(ctx: &mut FunctionContext, gfor: &GenericFor, startline: i32, endline: i32) {
+    let endlabel = ctx.new_lable();
+    let bodylable = ctx.new_lable();
+    let fllabel = ctx.new_lable();
+
+    let nnames = gfor.names.len();
+    ctx.enter_block(endlabel as usize, startline, endline);
+    let rgen = ctx.register_local_var(String::from("(for generator)"));
+    ctx.register_local_var(String::from("(for state)"));
+    ctx.register_local_var(String::from("(for control)"));
+
+    let regtop = ctx.reg_top();
+    compile_reg_assignment(ctx, &gfor.names, &gfor.exprs, regtop - 3, 3, startline);
+
+    ctx.code.add_ASBx(OP_JMP, 0, fllabel, startline);
+    for name in &gfor.names {
+        ctx.register_local_var(name.clone());
+    }
+
+    let lastpc = ctx.code.last_pc();
+    ctx.set_label_pc(bodylable, lastpc);
+    compile_chunk(ctx, &gfor.stmts);
+    ctx.leave_block();
+
+    let lastpc = ctx.code.last_pc();
+    ctx.set_label_pc(fllabel, lastpc);
+    ctx.code.add_ABC(OP_TFORLOOP, rgen as i32, 0, nnames as i32, startline);
+    ctx.code.add_ASBx(OP_JMP, 0, bodylable as i32, startline);
+
+    let lastpc = ctx.code.last_pc();
+    ctx.set_label_pc(endlabel, lastpc);
+}
+
+fn compile_return_stmt(ctx: &mut FunctionContext, exprs: &Vec<ExprNode>, startline: i32, endline: i32) {
+    let lenexprs = exprs.len();
+    let mut reg = ctx.reg_top();
+    let a = reg;
+    let mut lastisvararg = false;
+
+    if lenexprs == 1 {
+        match exprs[0].inner() {
+            Expr::Ident(ref s) => {
+                if let Some(index) = ctx.find_local_var(s) {
+                    ctx.code.add_ABC(OP_RETURN, index as i32, 2, 0, startline);
+                    return;
+                }
+            }
+            Expr::FuncCall(ref expr) => {
+                reg += compile_expr(ctx, reg, &exprs[0], &expr_ctx_none(-2));
+                let lastpc = ctx.code.last_pc();
+                ctx.code.set_opcode(lastpc, OP_TAILCALL);
+                ctx.code.add_ABC(OP_RETURN, a as i32, 0, 0, startline);
+                return;
+            }
+            _ => {}
+        }
+    }
+
+    for (i, expr) in exprs.iter().enumerate() {
+        if i == lenexprs - 1 && is_vararg(expr.inner()) {
+            compile_expr(ctx, reg, expr, &expr_ctx_none(-2));
+            lastisvararg = true;
+        } else {
+            reg += compile_expr(ctx, reg, expr, &expr_ctx_none(0))
+        }
+    }
+
+    let count = if lastisvararg { 0 } else { reg - a + 1 };
+    ctx.code.add_ABC(OP_RETURN, a as i32, count as i32, 0, startline);
+}
+
+fn compile_break_stmt(ctx: &mut FunctionContext, startline: i32) {
+    let mut blk = &ctx.block;
+    loop {
+        let label = blk.break_label;
+        if label != LABEL_NO_JUMP {
+            if blk.ref_upval {
+                match blk.parent {
+                    Some(ref parent) => {
+                        ctx.code.add_ABC(OP_CLOSE, parent.locals.last_index() as i32, 0, 0, startline);
+                    }
+                    None => unreachable!()
+                }
+            }
+            ctx.code.add_ASBx(OP_JMP, 0, label as i32, startline);
+            return;
+        }
+    }
+    panic!("no loop to break: {}", startline);
+}
+
+fn compile_stmt(ctx: &mut FunctionContext, stmt: &StmtNode) {
+    let (startline, endline) = (start_line(stmt), end_line(stmt));
+    match stmt.inner() {
+        &Stmt::Assign(ref lhs, ref rhs) => compile_assign_stmt(ctx, lhs, rhs),
+        &Stmt::LocalAssign(ref names, ref values) => compile_local_assign_stmt(ctx, names, values, startline),
+        &Stmt::FuncCall(ref expr) | &Stmt::MethodCall(ref expr) => {
+            let regtop = ctx.reg_top();
+            compile_fncall_expr(ctx, regtop, expr, &expr_ctx_none(-1));
+        }
+        &Stmt::DoBlock(ref stmts) => {
+            ctx.enter_block(LABEL_NO_JUMP, startline, endline);
+            compile_chunk(ctx, stmts);
+            ctx.leave_block();
+        }
+        &Stmt::While(ref cond, ref stmts) => compile_while_stmt(ctx, cond, stmts, startline, endline),
+        &Stmt::Repeat(ref cond, ref stmts) => compile_repeat_stmt(ctx, cond, stmts, startline, endline),
+        &Stmt::If(ref ifthenelse) => compile_if_stmt(ctx, ifthenelse, startline, endline),
+        &Stmt::NumberFor(ref nfor) => compile_nfor_stmt(ctx, nfor, startline, endline),
+        &Stmt::GenericFor(ref gfor) => compile_gfor_stmt(ctx, gfor, startline, endline),
+        &Stmt::FuncDef(ref funcdef) => compile_assign_stmt(ctx, &funcdef.name, &funcdef.body),
+        &Stmt::MethodDef(ref methoddef) => {
+            let mut regtop = ctx.reg_top();
+            let mut treg = 0;
+            compile_expr_with_KMV_propagation(ctx, &methoddef.receiver, &mut regtop, &mut treg);
+            let kreg = load_rk(ctx, &mut regtop, &methoddef.body, Rc::new(Value::String(methoddef.method.clone())));
+            compile_expr(ctx, regtop, &methoddef.body, &ExprContext::new(ExprContextType::Method, REG_UNDEFINED, 0));
+            ctx.code.add_ABC(OP_SETTABLE, treg as i32, kreg as i32, regtop as i32, start_line(&methoddef.receiver))
+        }
+        &Stmt::Return(ref exprs) => compile_return_stmt(ctx, exprs, startline, endline),
+        &Stmt::Break => compile_break_stmt(ctx, startline),
+    }
+}
+
+fn patchcode(ctx: &mut FunctionContext) {
+    let mut maxreg = if ctx.proto.param_count > 1 { ctx.proto.param_count } else { 1 };
+    let mut moven = 0;
+    let mut pc = 0;
+    let lastpc = ctx.code.pc;
+    while pc < lastpc {
+        let inst = ctx.code.at(pc);
+        let curop = get_opcode(inst);
+        match curop {
+            OP_CLOSURE => {
+                pc += ctx.proto.prototypes[get_argbx(inst) as usize].upval_count as usize;
+                moven = 0;
+                continue;
+            }
+            OP_SETGLOBAL | OP_SETUPVAL | OP_EQ | OP_LT | OP_LE | OP_TEST |
+            OP_TAILCALL | OP_RETURN | OP_FORPREP | OP_FORLOOP | OP_TFORLOOP |
+            OP_SETLIST | OP_CLOSE => {}
+            OP_CALL => {
+                let reg = (get_arga(inst) + get_argb(inst) - 2) as u8;
+                if reg > maxreg {
+                    maxreg = reg;
+                }
+            }
+            OP_VARARG => {
+                let reg = (get_arga(inst) + get_argb(inst) - 1) as u8;
+                if reg > maxreg {
+                    maxreg = reg;
+                }
+            }
+            OP_SELF => {
+                let reg = (get_arga(inst) + 1) as u8;
+                if reg > maxreg {
+                    maxreg = reg;
+                }
+            }
+            OP_LOADNIL => {
+                let reg = get_argb(inst) as u8;
+                if reg > maxreg {
+                    maxreg = reg;
+                }
+            }
+            OP_JMP => {
+                let mut distance = 0;
+                let mut count = 0;
+                let mut jmp = inst;
+                while get_opcode(jmp) == OP_JMP && count < 5 {
+                    let d = ctx.get_label_pc(get_argsbx(jmp)) - pc;
+                    if d > OPCODE_MAXSBx as usize {
+                        if distance == 0 {
+                            panic!("too long to jump")
+                        }
+                        break;
+                    }
+                    distance = d;
+                    count += 1;
+                }
+
+                if distance == 0 {
+                    ctx.code.set_opcode(pc, OP_NOP);
+                } else {
+                    ctx.code.set_argsbx(pc, distance as i32);
+                }
+                jmp = ctx.code.at(pc + distance + 1);
+            }
+            _ => {
+                let reg = get_arga(inst) as u8;
+                if reg > maxreg {
+                    maxreg = reg;
+                }
+            }
+        }
+        if curop == OP_MOVE {
+            moven += 1;
+        } else {
+            if moven > 1 {
+                ctx.code.set_opcode(pc - moven, OP_MOVEN);
+                let c = if moven - 1 < OPCODE_MAXC as usize { (moven - 1) as i32 } else { OPCODE_MAXC };
+                ctx.code.set_argc(pc - moven, c);
+            }
+            moven = 0;
+        }
+    }
+
+    maxreg += 1;
+    if maxreg > MAX_REGISTERS as u8 {
+        panic!("register overflow(too many local variables)")
+    }
+    ctx.proto.used_registers = maxreg as u8;
+}
+
+fn compile_func_expr(ctx: &mut FunctionContext, params: &ParList, stmts: &Vec<StmtNode>,
+                     expr_ctx: &ExprContext, startline: i32, endline: i32) {
+    ctx.proto.define_line = startline;
+    ctx.proto.last_define_line = endline;
+    if params.names.len() > (MAX_REGISTERS as usize) {
+        panic!("register overflow")
+    }
+    ctx.proto.param_count = params.names.len() as u8;
+    if expr_ctx.typ == ExprContextType::Method {
+        ctx.proto.param_count += 1;
+        ctx.register_local_var(String::from("self"));
+    }
+    for name in &params.names {
+        ctx.register_local_var(name.clone());
+    }
+
+    if params.vargs {
+        // compact vararg
+        ctx.proto.is_vararg = VARARG_HAS | VARARG_NEED;
+        if let Some(_) = ctx.parent {
+            ctx.register_local_var(String::from("arg"));
+        }
+        ctx.proto.is_vararg |= VARARG_IS;
+    }
+
+    compile_chunk(ctx, stmts);
+
+    ctx.code.add_ABC(OP_RETURN, 0, 1, 0, endline);
+    ctx.end_scope();
+    let mut codestore = CodeStore::new();
+
+    // TODO: thinking
+    patchcode(ctx);
+
+    ctx.proto.code = ctx.code.list();
+    ctx.proto.debug_pos = ctx.code.line_list();
+    ctx.proto.debug_upval = ctx.upval.names();
+    ctx.proto.upval_count = ctx.proto.debug_upval.len() as u8;
+    let mut strv: Vec<String> = vec![];
+    for clv in &ctx.proto.constants {
+        let sv = if let Value::String(ref s) = **clv { s.clone() } else { String::new() };
+        strv.push(sv);
+    }
+    ctx.proto.str_constants = strv;
+}
+
+pub fn compile(stmts: Vec<StmtNode>, name: String) -> Result<Box<FunctionProto>> {
+    let mut ctx = FunctionContext::new(name, None);
+    let mut par = ParList::new();
+    par.set_vargs(true);
+    compile_func_expr(&mut ctx, &par, &stmts, &expr_ctx_none(0), 0, 0);
+    Ok(ctx.proto)
 }
