@@ -196,50 +196,62 @@ pub fn op_to_string(op: i32) -> String {
 
 pub type Instruction = u32;
 
+#[inline]
 pub fn get_opcode(inst: Instruction) -> OpCode {
     (inst >> 26) as OpCode
 }
 
+#[inline]
 pub fn set_opcode(inst: &mut Instruction, op: OpCode) {
     *inst = (*inst & 0x3ffffff) | (op as u32) << 26
 }
 
+#[inline]
 pub fn get_arga(inst: Instruction) -> i32 {
     ((inst >> 18) & 0xff) as i32
 }
 
+#[inline]
 pub fn set_arga(inst: &mut Instruction, a: i32) {
     *inst = (*inst & 0xfc03ffff) | ((a as u32) & 0xff) << 18
 }
 
+#[inline]
 pub fn get_argb(inst: Instruction) -> i32 {
     (inst & 0x1ff) as i32
 }
 
+#[inline]
 pub fn set_argb(inst: &mut Instruction, b: i32) {
     *inst = (*inst & 0xfffffe00) | ((b as u32) & 0x1ff)
 }
 
+#[inline]
 pub fn get_argc(inst: Instruction) -> i32 {
     ((inst >> 9) & 0xff) as i32
 }
 
+#[inline]
 pub fn set_argc(inst: &mut Instruction, c: i32) {
     *inst = (*inst & 0xfffc01ff) | ((c as u32) & 0x1ff) << 9
 }
 
+#[inline]
 pub fn get_argbx(inst: Instruction) -> i32 {
     (inst & 0x3ffff) as i32
 }
 
+#[inline]
 pub fn set_argbx(inst: &mut Instruction, bx: i32) {
     *inst = (*inst & 0xfffc0000) | (bx & 0x3ffff) as u32
 }
 
+#[inline]
 pub fn get_argsbx(inst: Instruction) -> i32 {
     get_argbx(inst) - OPCODE_MAXSBx
 }
 
+#[inline]
 pub fn set_argsbx(inst: &mut Instruction, sbx: i32) {
     set_argbx(inst, sbx + OPCODE_MAXSBx)
 }
@@ -272,10 +284,12 @@ pub fn ASBx(op: OpCode, a: i32, sbx: i32) -> Instruction {
 pub const opBitRk: OpCodeSize = 1 << (OPCODE_SIZEB - 1);
 pub const opMaxIndexRk: OpCodeSize = opBitRk - 1;
 
+#[inline]
 pub fn is_k(v: i32) -> bool {
     v & opBitRk != 0
 }
 
+#[inline]
 pub fn rk_ask(v: i32) -> i32 {
     v | opBitRk
 }
