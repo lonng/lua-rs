@@ -1,4 +1,4 @@
-use std::fmt::{Debug, Formatter, Error};
+use std::fmt::{Debug, Error, Formatter};
 
 /// Node represents a node in abstract syntax tree
 pub struct Node<T> {
@@ -83,6 +83,12 @@ pub enum Expr {
 
     /// Function(ParList, Stmts)
     Function(ParList, Vec<StmtNode>),
+}
+
+impl Expr {
+    pub fn is_vararg(&self) -> bool {
+        if let &Expr::Dots = self { true } else { false }
+    }
 }
 
 #[derive(Debug)]
