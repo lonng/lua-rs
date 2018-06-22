@@ -15,7 +15,7 @@ const LABEL_NO_JUMP: usize = 0;
 const FIELDS_PER_FLUSH: i32 = 50;
 
 #[derive(Debug, Eq, PartialEq, Copy, Clone)]
-enum ExprContextType {
+enum ExprScope {
     Global,
     Upval,
     Local,
@@ -27,7 +27,7 @@ enum ExprContextType {
 
 #[derive(Debug, Eq, PartialEq, Copy, Clone)]
 struct ExprContext {
-    typ: ExprContextType,
+    scope: ExprScope,
     reg: usize,
     /// opt >= 0: wants varargopt+1 results, i.e  a = func()
     /// opt = -1: ignore results             i.e  func()
@@ -36,26 +36,26 @@ struct ExprContext {
 }
 
 impl ExprContext {
-    pub fn new(typ: ExprContextType, reg: usize, opt: i32) -> ExprContext {
+    pub fn new(scope: ExprScope, reg: usize, opt: i32) -> ExprContext {
         ExprContext {
-            typ,
+            scope,
             reg,
             opt,
         }
     }
 
     pub fn with_opt(opt: i32) -> ExprContext {
-        ExprContext::new(ExprContextType::None, REG_UNDEFINED, opt)
+        ExprContext::new(ExprScope::None, REG_UNDEFINED, opt)
     }
 
-    pub fn update(&mut self, typ: ExprContextType, reg: usize, opt: i32) {
-        self.typ = typ;
+    pub fn update(&mut self, typ: ExprScope, reg: usize, opt: i32) {
+        self.scope = typ;
         self.reg = reg;
         self.opt = opt;
     }
 
     pub fn savereg(&self, reg: usize) -> usize {
-        if self.typ != ExprContextType::Local || self.reg == REG_UNDEFINED {
+        if self.scope != ExprScope::Local || self.reg == REG_UNDEFINED {
             reg
         } else {
             self.reg
@@ -140,101 +140,101 @@ fn get_expr_name(expr: &Expr) -> String {
     }
 }
 
-struct CodeStore {
-    codes: Vec<u32>,
+struct Instructions {
+    insts: Vec<u32>,
     lines: Vec<u32>,
     pc: usize,
 }
 
-impl CodeStore {
-    pub fn new() -> CodeStore {
-        CodeStore {
-            codes: Vec::new(),
+impl Instructions {
+    fn new() -> Instructions {
+        Instructions {
+            insts: Vec::new(),
             lines: Vec::new(),
             pc: 0,
         }
     }
 
-    pub fn add(&mut self, inst: Instruction, line: u32) {
-        let len = self.codes.len();
+    fn add(&mut self, inst: Instruction, line: u32) {
+        let len = self.insts.len();
         if len <= 0 || self.pc == len {
-            self.codes.push(inst);
+            self.insts.push(inst);
             self.lines.push(line);
         } else {
             let pc = self.pc;
-            self.codes[pc] = inst;
+            self.insts[pc] = inst;
             self.lines[pc] = line;
         }
         self.pc += 1;
     }
 
-    pub fn add_ABC(&mut self, op: OpCode, a: i32, b: i32, c: i32, line: u32) {
+    fn add_ABC(&mut self, op: OpCode, a: i32, b: i32, c: i32, line: u32) {
         self.add(ABC(op, a, b, c), line);
     }
 
-    pub fn add_ABx(&mut self, op: OpCode, a: i32, bx: i32, line: u32) {
+    fn add_ABx(&mut self, op: OpCode, a: i32, bx: i32, line: u32) {
         self.add(ABx(op, a, bx), line)
     }
 
-    pub fn add_ASBx(&mut self, op: OpCode, a: i32, sbx: i32, line: u32) {
+    fn add_ASBx(&mut self, op: OpCode, a: i32, sbx: i32, line: u32) {
         self.add(ASBx(op, a, sbx), line)
     }
 
-    pub fn set_opcode(&mut self, pc: usize, op: OpCode) {
-        set_opcode(&mut self.codes[pc], op)
+    fn set_opcode(&mut self, pc: usize, op: OpCode) {
+        set_opcode(&mut self.insts[pc], op)
     }
 
-    pub fn set_arga(&mut self, pc: usize, a: i32) {
-        set_arga(&mut self.codes[pc], a)
+    fn set_arga(&mut self, pc: usize, a: i32) {
+        set_arga(&mut self.insts[pc], a)
     }
 
-    pub fn set_argb(&mut self, pc: usize, b: i32) {
-        set_argb(&mut self.codes[pc], b)
+    fn set_argb(&mut self, pc: usize, b: i32) {
+        set_argb(&mut self.insts[pc], b)
     }
 
-    pub fn set_argc(&mut self, pc: usize, c: i32) {
-        set_argc(&mut self.codes[pc], c)
+    fn set_argc(&mut self, pc: usize, c: i32) {
+        set_argc(&mut self.insts[pc], c)
     }
 
-    pub fn set_argbx(&mut self, pc: usize, bx: i32) {
-        set_argbx(&mut self.codes[pc], bx)
+    fn set_argbx(&mut self, pc: usize, bx: i32) {
+        set_argbx(&mut self.insts[pc], bx)
     }
 
-    pub fn set_argsbx(&mut self, pc: usize, sbx: i32) {
-        set_argsbx(&mut self.codes[pc], sbx)
+    fn set_argsbx(&mut self, pc: usize, sbx: i32) {
+        set_argsbx(&mut self.insts[pc], sbx)
     }
 
-    pub fn at(&self, pc: usize) -> Instruction {
-        self.codes[pc]
+    fn at(&self, pc: usize) -> Instruction {
+        self.insts[pc]
     }
 
-    pub fn list(&self) -> Vec<Instruction> {
+    fn list(&self) -> Vec<Instruction> {
         let pc = self.pc;
-        Vec::from(&self.codes[..pc])
+        Vec::from(&self.insts[..pc])
     }
 
-    pub fn line_list(&self) -> Vec<u32> {
+    fn line_list(&self) -> Vec<u32> {
         let pc = self.pc;
         Vec::from(&self.lines[..pc])
     }
 
-    pub fn last_pc(&self) -> usize {
+    fn last_pc(&self) -> usize {
         self.pc - 1
     }
 
-    pub fn last(&self) -> Instruction {
+    fn last(&self) -> Instruction {
         if self.pc == 0 {
             INVALID_INSTRUCTION
         } else {
-            self.codes[self.pc - 1]
+            self.insts[self.pc - 1]
         }
     }
 
-    pub fn pop(&mut self) {
+    fn pop(&mut self) {
         self.pc -= 1
     }
 
-    pub fn propagate_KMV(&mut self, top: usize, save: &mut usize, reg: &mut usize, inc: usize, loadk: bool) {
+    fn propagate_KMV(&mut self, top: usize, save: &mut usize, reg: &mut usize, inc: usize, loadk: bool) {
         let lastinst = self.last();
         if get_arga(lastinst) >= (top as i32) {
             match get_opcode(lastinst) {
@@ -270,7 +270,7 @@ struct Var {
 }
 
 impl Var {
-    pub fn new(index: usize, name: String) -> Var {
+    fn new(index: usize, name: String) -> Var {
         Var {
             index,
             name,
@@ -286,18 +286,18 @@ struct VarRegistry {
 }
 
 impl VarRegistry {
-    pub fn new(offset: usize) -> VarRegistry {
+    fn new(offset: usize) -> VarRegistry {
         VarRegistry {
             names: Vec::new(),
             offset,
         }
     }
 
-    pub fn names(&self) -> Vec<String> {
+    fn names(&self) -> Vec<String> {
         self.names.clone()
     }
 
-    pub fn list(&self) -> Vec<Var> {
+    fn list(&self) -> Vec<Var> {
         self.names.
             iter().
             enumerate().
@@ -306,11 +306,11 @@ impl VarRegistry {
             collect()
     }
 
-    pub fn last_index(&self) -> usize {
+    fn last_index(&self) -> usize {
         self.offset + self.names.len()
     }
 
-    pub fn find(&self, name: &String) -> Option<usize> {
+    fn find(&self, name: &String) -> Option<usize> {
         self.names
             .iter()
             .enumerate()
@@ -319,14 +319,14 @@ impl VarRegistry {
             .map(|x| self.offset + x.0)
     }
 
-    pub fn register_unique(&mut self, name: String) -> usize {
+    fn register_unique(&mut self, name: String) -> usize {
         match self.find(&name) {
             Some(index) => index,
             None => self.register(name),
         }
     }
 
-    pub fn register(&mut self, name: String) -> usize {
+    fn register(&mut self, name: String) -> usize {
         self.names.push(name);
         self.names.len() - 1 + self.offset
     }
@@ -342,7 +342,7 @@ struct Block {
 }
 
 impl Block {
-    pub fn new(locals: VarRegistry, break_label: usize, lineinfo: (u32, u32)) -> Box<Block> {
+    fn new(locals: VarRegistry, break_label: usize, lineinfo: (u32, u32)) -> Box<Block> {
         Box::new(Block {
             locals,
             break_label,
@@ -354,7 +354,7 @@ impl Block {
 
     /// Recursively find a local variable, return a block
     /// containing a local variable
-    pub fn find_var_block(&mut self, name: &String) -> Option<&mut Block> {
+    fn find_var_block(&mut self, name: &String) -> Option<&mut Block> {
         match self.locals.find(name) {
             Some(_) => Some(self),
             None => match self.parent {
@@ -364,19 +364,19 @@ impl Block {
         }
     }
 
-    pub fn set_parent(&mut self, parent: Option<Box<Block>>) {
+    fn set_parent(&mut self, parent: Option<Box<Block>>) {
         self.parent = parent;
     }
 
-    pub fn set_ref_upval(&mut self, b: bool) {
+    fn set_ref_upval(&mut self, b: bool) {
         self.ref_upval = b;
     }
 
-    pub fn startline(&self) -> u32 {
+    fn startline(&self) -> u32 {
         self.lineinfo.0
     }
 
-    pub fn endline(&self) -> u32 {
+    fn endline(&self) -> u32 {
         self.lineinfo.0
     }
 }
@@ -394,7 +394,7 @@ struct DebugLocalInfo {
 }
 
 impl DebugLocalInfo {
-    pub fn new(name: String, spc: usize, epc: usize) -> Box<DebugLocalInfo> {
+    fn new(name: String, spc: usize, epc: usize) -> Box<DebugLocalInfo> {
         Box::new(DebugLocalInfo {
             name,
             spc,
@@ -409,7 +409,7 @@ struct DebugCall {
 }
 
 impl DebugCall {
-    pub fn new(name: String, pc: usize) -> DebugCall {
+    fn new(name: String, pc: usize) -> DebugCall {
         DebugCall {
             name,
             pc,
@@ -462,7 +462,7 @@ impl FunctionProto {
 
 struct Compiler<'p> {
     proto: Box<FunctionProto>,
-    code: CodeStore,
+    code: Instructions,
     parent: Option<&'p Compiler<'p>>,
     upval: VarRegistry,
     block: Box<Block>,
@@ -473,10 +473,10 @@ struct Compiler<'p> {
 }
 
 impl<'p> Compiler<'p> {
-    pub fn new(source: String, parent: Option<&'p Compiler>) -> Box<Compiler<'p>> {
+    fn new(source: String, parent: Option<&'p Compiler>) -> Box<Compiler<'p>> {
         Box::new(Compiler {
             proto: FunctionProto::new(source),
-            code: CodeStore::new(),
+            code: Instructions::new(),
             parent,
             upval: VarRegistry::new(0),
             block: Block::new(VarRegistry::new(0), LABEL_NO_JUMP, (0, 0)),
@@ -486,21 +486,21 @@ impl<'p> Compiler<'p> {
         })
     }
 
-    pub fn new_label(&mut self) -> i32 {
+    fn new_label(&mut self) -> i32 {
         let r = self.label_id;
         self.label_id += 1;
         r
     }
 
-    pub fn set_label_pc(&mut self, label: i32, pc: usize) {
+    fn set_label_pc(&mut self, label: i32, pc: usize) {
         self.label_pc.insert(label, pc);
     }
 
-    pub fn get_label_pc(&self, label: i32) -> usize {
+    fn get_label_pc(&self, label: i32) -> usize {
         self.label_pc[&label]
     }
 
-    pub fn const_index(&mut self, value: Rc<Value>) -> usize {
+    fn const_index(&mut self, value: Rc<Value>) -> usize {
         let v = self.proto.constants
             .iter()
             .enumerate()
@@ -521,22 +521,22 @@ impl<'p> Compiler<'p> {
         }
     }
 
-    pub fn reg_top(&self) -> usize {
+    fn reg_top(&self) -> usize {
         self.reg_top
     }
 
-    pub fn set_reg_top(&mut self, top: usize) {
+    fn set_reg_top(&mut self, top: usize) {
         self.reg_top = top;
     }
 
-    pub fn register_local_var(&mut self, name: String) -> usize {
+    fn register_local_var(&mut self, name: String) -> usize {
         let ret = self.block.locals.register(name.clone());
         self.proto.debug_locals.push(DebugLocalInfo::new(name, self.code.last_pc() + 1, 0));
         self.reg_top += 1;
         ret
     }
 
-    pub fn find_local_var(&self, name: &String) -> Option<usize> {
+    fn find_local_var(&self, name: &String) -> Option<usize> {
         let mut blk = &self.block;
         loop {
             let r = blk.locals.find(name);
@@ -550,14 +550,14 @@ impl<'p> Compiler<'p> {
         }
     }
 
-    pub fn enter_block(&mut self, blabel: usize, lineinfo: (u32, u32)) {
+    fn enter_block(&mut self, blabel: usize, lineinfo: (u32, u32)) {
         let vtb = VarRegistry::new(self.reg_top());
         let mut blk = Block::new(vtb, blabel, lineinfo);
         swap(&mut blk, &mut self.block);
         self.block.set_parent(Some(blk));
     }
 
-    pub fn close_upval(&mut self) -> Option<usize> {
+    fn close_upval(&mut self) -> Option<usize> {
         if self.block.ref_upval {
             match self.block.parent {
                 Some(ref parent) => {
@@ -572,14 +572,14 @@ impl<'p> Compiler<'p> {
         }
     }
 
-    pub fn end_scope(&mut self) {
+    fn end_scope(&mut self) {
         let last_pc = self.code.last_pc();
         for vr in self.block.locals.list().iter() {
             self.proto.debug_locals[vr.index].epc = last_pc;
         }
     }
 
-    pub fn leave_block(&mut self) -> Option<usize> {
+    fn leave_block(&mut self) -> Option<usize> {
         let closed = self.close_upval();
         self.end_scope();
         let mut parent: Option<Box<Block>> = None; // swap replacement
@@ -609,21 +609,21 @@ impl<'p> Compiler<'p> {
         self.leave_block();
     }
 
-    fn get_ident_reftype(&self, name: &String) -> ExprContextType {
+    fn get_ident_reftype(&self, name: &String) -> ExprScope {
         // local variable
         match self.find_local_var(name) {
-            Some(_) => ExprContextType::Local,
+            Some(_) => ExprScope::Local,
             None => {
                 // upvalue or global variable
                 let t = match self.parent {
                     Some(ref parent) => parent.get_ident_reftype(name),
-                    None => ExprContextType::Global,
+                    None => ExprScope::Global,
                 };
 
-                if t == ExprContextType::Local {
-                    ExprContextType::Upval
+                if t != ExprScope::Global {
+                    ExprScope::Upval
                 } else {
-                    ExprContextType::Global
+                    ExprScope::Global
                 }
             }
         }
@@ -696,7 +696,7 @@ impl<'p> Compiler<'p> {
 
             self.code.set_argb(tablepc, int2fb(tablereg as i32));
             self.code.set_argc(tablepc, int2fb((fieldlen - tablereg) as i32));
-            if expr_ctx.typ == ExprContextType::Local && expr_ctx.reg != tablereg {
+            if expr_ctx.scope == ExprScope::Local && expr_ctx.reg != tablereg {
                 self.code.add_ABC(OP_MOVE, expr_ctx.reg as i32, tablereg as i32, 0, start_line(table))
             }
         } else {
@@ -705,7 +705,7 @@ impl<'p> Compiler<'p> {
     }
 
     fn compile_fncall_expr(&mut self, mut reg: usize, expr: &ExprNode, expr_ctx: &ExprContext) -> usize {
-        if expr_ctx.typ == ExprContextType::Local && expr_ctx.reg == self.proto.param_count as usize - 1 {
+        if expr_ctx.scope == ExprScope::Local && expr_ctx.reg == self.proto.param_count as usize - 1 {
             reg = expr_ctx.reg
         }
         let funcreg = reg;
@@ -753,7 +753,7 @@ impl<'p> Compiler<'p> {
         self.code.add_ABC(OP_CALL, funcreg as i32, b as i32, expr_ctx.opt + 2, start_line(expr));
         self.proto.debug_calls.push(DebugCall::new(name, self.code.last_pc()));
 
-        if expr_ctx.opt == 2 && expr_ctx.typ == ExprContextType::Local && funcreg != expr_ctx.reg {
+        if expr_ctx.opt == 2 && expr_ctx.scope == ExprScope::Local && funcreg != expr_ctx.reg {
             self.code.add_ABC(OP_MOVE, expr_ctx.reg as i32, funcreg as i32, 0, start_line(expr));
             return 1;
         }
@@ -1063,15 +1063,15 @@ impl<'p> Compiler<'p> {
             &Expr::Ident(ref s) => {
                 let identtype = self.get_ident_reftype(s);
                 match identtype {
-                    ExprContextType::Global => {
+                    ExprScope::Global => {
                         let index = self.const_index(Rc::new(Value::String(s.clone())));
                         self.code.add_ABx(OP_LOADK, svreg, index as i32, start_line(expr))
                     }
-                    ExprContextType::Upval => {
+                    ExprScope::Upval => {
                         let index = self.upval.register_unique(s.clone());
                         self.code.add_ABC(OP_GETUPVAL, svreg, index as i32, 0, start_line(expr));
                     }
-                    ExprContextType::Local => {
+                    ExprScope::Local => {
                         let index = match self.find_local_var(s) {
                             Some(i) => i as i32,
                             None => -1
@@ -1162,13 +1162,13 @@ impl<'p> Compiler<'p> {
                     let identtype = self.get_ident_reftype(s);
                     let mut expr_ctx = ExprContext::new(identtype, REG_UNDEFINED, 0);
                     match identtype {
-                        ExprContextType::Global => {
+                        ExprScope::Global => {
                             self.const_index(Rc::new(Value::String(s.clone())));
                         }
-                        ExprContextType::Upval => {
+                        ExprScope::Upval => {
                             self.upval.register_unique(s.clone());
                         }
-                        ExprContextType::Local => {
+                        ExprScope::Local => {
                             if islast {
                                 // TODO: check
                                 expr_ctx.reg = self.find_local_var(s).unwrap();
@@ -1179,7 +1179,7 @@ impl<'p> Compiler<'p> {
                     acs.push(AssignContext::new(expr_ctx, 0, 0, false, false))
                 }
                 &Expr::AttrGet(ref obj, ref key) => {
-                    let mut expr_ctx = ExprContext::new(ExprContextType::Table, REG_UNDEFINED, 0);
+                    let mut expr_ctx = ExprContext::new(ExprScope::Table, REG_UNDEFINED, 0);
                     self.compile_expr_with_KMV_propagation(obj, &mut reg, &mut expr_ctx.reg);
                     reg += self.compile_expr(reg, key, &ExprContext::with_opt(0));
                     let keyks = if let Expr::String(_) = key.inner() { true } else { false };
@@ -1209,7 +1209,7 @@ impl<'p> Compiler<'p> {
                 reg += incr;
                 for i in namesassigned..(namesassigned + incr) {
                     acs[i].nmove = true;
-                    if acs[i].expr_ctx.typ == ExprContextType::Table {
+                    if acs[i].expr_ctx.scope == ExprScope::Table {
                         acs[i].valrk = regstart + (1 - namesassigned);
                     }
                 }
@@ -1232,7 +1232,7 @@ impl<'p> Compiler<'p> {
 
             let idx = reg;
             let incr = self.compile_expr(reg, &expr, &ac.expr_ctx);
-            if ac.expr_ctx.typ == ExprContextType::Table {
+            if ac.expr_ctx.scope == ExprScope::Table {
                 match expr.inner() {
                     Expr::BinaryOp(BinaryOpr::And, _, _) | Expr::BinaryOp(BinaryOpr::Or, _, _) => {
                         let regtop = self.reg_top();
@@ -1265,8 +1265,8 @@ impl<'p> Compiler<'p> {
         for j in 0..lhslen {
             let i = lhslen - 1 - j;
             let expr = &lhs[i];
-            match acs[i].expr_ctx.typ {
-                ExprContextType::Local => {
+            match acs[i].expr_ctx.scope {
+                ExprScope::Local => {
                     if acs[i].nmove {
                         if let Expr::Ident(ref s) = expr.inner() {
                             let index = match self.find_local_var(s) {
@@ -1280,7 +1280,7 @@ impl<'p> Compiler<'p> {
                         }
                     }
                 }
-                ExprContextType::Global => {
+                ExprScope::Global => {
                     if let Expr::Ident(ref s) = expr.inner() {
                         let index = self.const_index(Rc::new(Value::String(s.clone())));
                         self.code.add_ABC(OP_MOVE, index as i32, reg as i32, 0, start_line(expr));
@@ -1289,7 +1289,7 @@ impl<'p> Compiler<'p> {
                         unreachable!()
                     }
                 }
-                ExprContextType::Upval => {
+                ExprScope::Upval => {
                     if let Expr::Ident(ref s) = expr.inner() {
                         let index = self.upval.register_unique(s.clone());
                         self.code.add_ABC(OP_MOVE, index as i32, reg as i32, 0, start_line(expr));
@@ -1298,7 +1298,7 @@ impl<'p> Compiler<'p> {
                         unreachable!()
                     }
                 }
-                ExprContextType::Table => {
+                ExprScope::Table => {
                     let opcode = if acs[i].keyks { OP_SETTABLEKS } else { OP_SETTABLE };
                     self.code.add_ABC(opcode, acs[i].expr_ctx.reg as i32, acs[i].keyrk as i32, acs[i].valrk as i32, start_line(expr));
                     if is_k(acs[i].valrk as i32) {
@@ -1320,12 +1320,12 @@ impl<'p> Compiler<'p> {
         while namesassigned < lennames && namesassigned < lenexprs {
             if exprs[namesassigned].inner().is_vararg() && (lenexprs - namesassigned - 1) <= 0 {
                 let opt = nvars - namesassigned;
-                expr_ctx.update(ExprContextType::Vararg, reg, (opt - 1) as i32);
+                expr_ctx.update(ExprScope::Vararg, reg, (opt - 1) as i32);
                 self.compile_expr(reg, &exprs[namesassigned], &expr_ctx);
                 reg += opt;
                 namesassigned = lennames;
             } else {
-                expr_ctx.update(ExprContextType::Local, reg, 0);
+                expr_ctx.update(ExprScope::Local, reg, 0);
                 self.compile_expr(reg, &exprs[namesassigned], &expr_ctx);
                 reg += 1;
                 namesassigned += 1;
@@ -1340,7 +1340,7 @@ impl<'p> Compiler<'p> {
 
         for i in namesassigned..lenexprs {
             let opt = if i != lenexprs - 1 { 0 } else { -1 };
-            expr_ctx.update(ExprContextType::None, reg, opt);
+            expr_ctx.update(ExprScope::None, reg, opt);
             reg += self.compile_expr(reg, &exprs[i], &expr_ctx);
         }
     }
@@ -1495,17 +1495,17 @@ impl<'p> Compiler<'p> {
         self.enter_block(endlabel as usize, (startline, endline));
         let regtop = self.reg_top();
         let rindex = self.register_local_var(String::from("(for index)"));
-        expr_ctx.update(ExprContextType::Local, rindex, 0);
+        expr_ctx.update(ExprScope::Local, rindex, 0);
         self.compile_expr(regtop, &nfor.init, &expr_ctx);
 
         let regtop = self.reg_top();
         let rlimit = self.register_local_var(String::from("(for limit)"));
-        expr_ctx.update(ExprContextType::Local, rlimit, 0);
+        expr_ctx.update(ExprScope::Local, rlimit, 0);
         self.compile_expr(regtop, &nfor.limit, &expr_ctx);
 
         let regtop = self.reg_top();
         let rstep = self.register_local_var(String::from("(for step)"));
-        expr_ctx.update(ExprContextType::Local, rstep, 0);
+        expr_ctx.update(ExprScope::Local, rstep, 0);
         self.compile_expr(regtop, &nfor.step, &expr_ctx);
 
         self.code.add_ASBx(OP_FORPREP, rindex as i32, 0, startline);
@@ -1638,7 +1638,7 @@ impl<'p> Compiler<'p> {
                 let mut treg = 0;
                 self.compile_expr_with_KMV_propagation(&methoddef.receiver, &mut regtop, &mut treg);
                 let kreg = self.load_rk(&mut regtop, &methoddef.body, Rc::new(Value::String(methoddef.method.clone())));
-                self.compile_expr(regtop, &methoddef.body, &ExprContext::new(ExprContextType::Method, REG_UNDEFINED, 0));
+                self.compile_expr(regtop, &methoddef.body, &ExprContext::new(ExprScope::Method, REG_UNDEFINED, 0));
                 self.code.add_ABC(OP_SETTABLE, treg as i32, kreg as i32, regtop as i32, start_line(&methoddef.receiver))
             }
             &Stmt::Return(ref exprs) => self.compile_return_stmt(exprs, startline, endline),
@@ -1743,7 +1743,7 @@ impl<'p> Compiler<'p> {
             panic!("register overflow")
         }
         self.proto.param_count = params.names.len() as u8;
-        if expr_ctx.typ == ExprContextType::Method {
+        if expr_ctx.scope == ExprScope::Method {
             self.proto.param_count += 1;
             self.register_local_var(String::from("self"));
         }
@@ -1764,7 +1764,7 @@ impl<'p> Compiler<'p> {
 
         self.code.add_ABC(OP_RETURN, 0, 1, 0, endline);
         self.end_scope();
-        let mut codestore = CodeStore::new();
+        let mut codestore = Instructions::new();
 
         // TODO: thinking
         self.patchcode();
@@ -1783,7 +1783,7 @@ impl<'p> Compiler<'p> {
 }
 
 pub fn compile(stmts: Vec<StmtNode>, name: String) -> Result<Box<FunctionProto>> {
-    //println!("{:#?}", stmts);
+    println!("{:#?}", stmts);
     let mut compiler = Compiler::new(name, None);
     let mut par = ParList::new();
     par.set_vargs(true);
