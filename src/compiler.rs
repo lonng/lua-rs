@@ -44,10 +44,22 @@ impl ExprContext {
         }
     }
 
+    pub fn with_opt(opt: i32) -> ExprContext {
+        ExprContext::new(ExprContextType::None, REG_UNDEFINED, opt)
+    }
+
     pub fn update(&mut self, typ: ExprContextType, reg: usize, opt: i32) {
         self.typ = typ;
         self.reg = reg;
         self.opt = opt;
+    }
+
+    pub fn savereg(&self, reg: usize) -> usize {
+        if self.typ != ExprContextType::Local || self.reg == REG_UNDEFINED {
+            reg
+        } else {
+            self.reg
+        }
     }
 }
 
@@ -73,8 +85,6 @@ impl AssignContext {
     }
 }
 
-type ConstValue = Node<Value>;
-
 #[derive(Debug)]
 struct Lblabels {
     t: i32,
@@ -89,13 +99,9 @@ impl Lblabels {
             t,
             f,
             e,
-            b: b,
+            b,
         }
     }
-}
-
-fn expr_ctx_none(opt: i32) -> ExprContext {
-    ExprContext::new(ExprContextType::None, REG_UNDEFINED, 0)
 }
 
 fn start_line<T>(p: &Node<T>) -> u32 {
@@ -106,22 +112,6 @@ fn start_line<T>(p: &Node<T>) -> u32 {
 fn end_line<T>(p: &Node<T>) -> u32 {
     debug_assert!(p.last_line() != 0);
     p.last_line()
-}
-
-fn save_reg(ctx: &ExprContext, reg: usize) -> usize {
-    if ctx.typ != ExprContextType::Local || ctx.reg == REG_UNDEFINED {
-        reg
-    } else {
-        ctx.reg
-    }
-}
-
-fn is_vararg(expr: &Expr) -> bool {
-    if let &Expr::Dots = expr {
-        true
-    } else {
-        false
-    }
 }
 
 fn int2fb(val: i32) -> i32 {
@@ -259,29 +249,32 @@ impl CodeStore {
     }
 }
 
-struct Variable {
+/// Variable
+#[derive(Debug)]
+struct Var {
     index: usize,
     name: String,
 }
 
-impl Variable {
-    pub fn new(index: usize, name: String) -> Variable {
-        Variable {
+impl Var {
+    pub fn new(index: usize, name: String) -> Var {
+        Var {
             index,
             name,
         }
     }
 }
 
+/// Variable table
 #[derive(Debug, PartialEq)]
-struct VariableTable {
+struct VarTable {
     names: Vec<String>,
     offset: usize,
 }
 
-impl VariableTable {
-    pub fn new(offset: usize) -> VariableTable {
-        VariableTable {
+impl VarTable {
+    pub fn new(offset: usize) -> VarTable {
+        VarTable {
             names: Vec::new(),
             offset,
         }
@@ -291,12 +284,12 @@ impl VariableTable {
         self.names.clone()
     }
 
-    pub fn list(&self) -> Vec<Variable> {
+    pub fn list(&self) -> Vec<Var> {
         self.names.
             iter().
             enumerate().
             map(|(index, name)|
-                Variable::new(index + self.offset, name.clone())).
+                Var::new(index + self.offset, name.clone())).
             collect()
     }
 
@@ -305,13 +298,12 @@ impl VariableTable {
     }
 
     pub fn find(&self, name: &String) -> Option<usize> {
-        match self.names.
-            iter().
-            enumerate().
-            find(|x| x.1 == name) {
-            Some((index, _)) => Some(self.offset + index),
-            None => None
-        }
+        self.names
+            .iter()
+            .enumerate()
+            .rev()
+            .find(|x| x.1 == name)
+            .map(|x| self.offset + x.0)
     }
 
     pub fn register_unique(&mut self, name: String) -> usize {
@@ -328,43 +320,51 @@ impl VariableTable {
 }
 
 #[derive(Debug, PartialEq)]
-struct CodeBlock {
-    locals: VariableTable,
+struct Block {
+    locals: VarTable,
     break_label: usize,
-    parent: Option<Box<CodeBlock>>,
+    parent: Option<Box<Block>>,
     ref_upval: bool,
-    start_line: u32,
-    end_line: u32,
+    lineinfo: (u32, u32),
 }
 
-impl CodeBlock {
-    pub fn new(locals: VariableTable, break_label: usize, start_line: u32, end_line: u32) -> Box<CodeBlock> {
-        Box::new(CodeBlock {
+impl Block {
+    pub fn new(locals: VarTable, break_label: usize, lineinfo: (u32, u32)) -> Box<Block> {
+        Box::new(Block {
             locals,
             break_label,
             parent: None,
             ref_upval: false,
-            start_line,
-            end_line,
+            lineinfo,
         })
     }
 
-    pub fn variable_block(&mut self, name: &String) -> Option<&mut CodeBlock> {
+    /// Recursively find a local variable, return a block
+    /// containing a local variable
+    pub fn find_var_block(&mut self, name: &String) -> Option<&mut Block> {
         match self.locals.find(name) {
             Some(_) => Some(self),
             None => match self.parent {
-                Some(ref mut parent) => parent.variable_block(name),
+                Some(ref mut parent) => parent.find_var_block(name),
                 None => None
             }
         }
     }
 
-    pub fn set_parent(&mut self, parent: Option<Box<CodeBlock>>) {
+    pub fn set_parent(&mut self, parent: Option<Box<Block>>) {
         self.parent = parent;
     }
 
     pub fn set_ref_upval(&mut self, b: bool) {
         self.ref_upval = b;
+    }
+
+    pub fn startline(&self) -> u32 {
+        self.lineinfo.0
+    }
+
+    pub fn endline(&self) -> u32 {
+        self.lineinfo.0
     }
 }
 
@@ -406,8 +406,8 @@ impl DebugCall {
 
 pub struct FunctionProto {
     source: String,
-    define_line: u32,
-    last_define_line: u32,
+    /// lineinfo: (startline, endline)
+    lineinfo: (u32, u32),
     upval_count: u8,
     param_count: u8,
     is_vararg: u8,
@@ -416,20 +416,21 @@ pub struct FunctionProto {
     constants: Vec<Rc<Value>>,
     prototypes: Vec<Box<FunctionProto>>,
 
+    /// Debug information
     debug_pos: Vec<u32>,
     debug_locals: Vec<Box<DebugLocalInfo>>,
     debug_calls: Vec<DebugCall>,
     debug_upval: Vec<String>,
 
-    str_constants: Vec<String>,
+    /// String constants
+    strings: Vec<String>,
 }
 
 impl FunctionProto {
     pub fn new(source: String) -> Box<FunctionProto> {
         Box::new(FunctionProto {
             source,
-            define_line: 0,
-            last_define_line: 0,
+            lineinfo: (0, 0),
             upval_count: 0,
             param_count: 0,
             is_vararg: 0,
@@ -441,7 +442,7 @@ impl FunctionProto {
             debug_locals: Vec::with_capacity(16),
             debug_calls: Vec::with_capacity(128),
             debug_upval: Vec::with_capacity(16),
-            str_constants: Vec::with_capacity(32),
+            strings: Vec::with_capacity(32),
         })
     }
 }
@@ -450,8 +451,8 @@ struct FunctionContext<'p> {
     proto: Box<FunctionProto>,
     code: CodeStore,
     parent: Option<&'p FunctionContext<'p>>,
-    upval: VariableTable,
-    block: Box<CodeBlock>,
+    upval: VarTable,
+    block: Box<Block>,
 
     reg_top: usize,
     label_id: i32,
@@ -464,8 +465,8 @@ impl<'p> FunctionContext<'p> {
             proto: FunctionProto::new(source),
             code: CodeStore::new(),
             parent,
-            upval: VariableTable::new(0),
-            block: CodeBlock::new(VariableTable::new(0), LABEL_NO_JUMP, 0, 0),
+            upval: VarTable::new(0),
+            block: Block::new(VarTable::new(0), LABEL_NO_JUMP, (0, 0)),
             reg_top: 0,
             label_id: 1,
             label_pc: HashMap::new(),
@@ -498,11 +499,11 @@ impl<'p> FunctionContext<'p> {
             Some(v) => v,
             None => {
                 self.proto.constants.push(value);
-                let len = self.proto.constants.len() - 1;
-                if len > (OPCODE_MAXBx as usize) {
-                    panic!("{}:{} to many constants", self.proto.source, self.proto.define_line)
+                let index = self.proto.constants.len() - 1;
+                if index > (OPCODE_MAXBx as usize) {
+                    panic!("{}:{:?} to many constants", self.proto.source, self.proto.lineinfo)
                 } else {
-                    len
+                    index
                 }
             }
         }
@@ -519,8 +520,7 @@ impl<'p> FunctionContext<'p> {
     pub fn register_local_var(&mut self, name: String) -> usize {
         let ret = self.block.locals.register(name.clone());
         self.proto.debug_locals.push(DebugLocalInfo::new(name, self.code.last_pc() + 1, 0));
-        let top = self.reg_top();
-        self.set_reg_top(top + 1);
+        self.reg_top += 1;
         ret
     }
 
@@ -532,16 +532,15 @@ impl<'p> FunctionContext<'p> {
                 Some(i) => return Some(i),
                 None => match blk.parent {
                     Some(ref parent) => blk = parent,
-                    None => break
+                    None => return None
                 }
             }
         }
-        None
     }
 
-    pub fn enter_block(&mut self, blabel: usize, start_line: u32, end_line: u32) {
-        let vtb = VariableTable::new(self.reg_top());
-        let mut blk = CodeBlock::new(vtb, blabel, start_line, end_line);
+    pub fn enter_block(&mut self, blabel: usize, lineinfo: (u32, u32)) {
+        let vtb = VarTable::new(self.reg_top());
+        let mut blk = Block::new(vtb, blabel, lineinfo);
         swap(&mut blk, &mut self.block);
         self.block.set_parent(Some(blk));
     }
@@ -549,9 +548,9 @@ impl<'p> FunctionContext<'p> {
     pub fn close_upval(&mut self) -> Option<usize> {
         if self.block.ref_upval {
             match self.block.parent {
-                Some(ref p) => {
-                    let x = p.locals.last_index();
-                    self.code.add_ABC(OP_CLOSE, x as i32, 0, 0, self.block.end_line);
+                Some(ref parent) => {
+                    let x = parent.locals.last_index();
+                    self.code.add_ABC(OP_CLOSE, x as i32, 0, 0, self.block.endline());
                     Some(x)
                 }
                 None => None,
@@ -571,7 +570,7 @@ impl<'p> FunctionContext<'p> {
     pub fn leave_block(&mut self) -> Option<usize> {
         let closed = self.close_upval();
         self.end_scope();
-        let mut parent: Option<Box<CodeBlock>> = None; // swap replacement
+        let mut parent: Option<Box<Block>> = None; // swap replacement
         swap(&mut self.block.parent, &mut parent);
         self.block = parent.unwrap();
         let top = self.block.locals.last_index();
@@ -592,7 +591,7 @@ fn compile_block(ctx: &mut FunctionContext, block: &Vec<StmtNode>) {
     }
     let start_line = start_line(&block[0]);
     let end_line = end_line(&block[block.len() - 1]);
-    ctx.enter_block(LABEL_NO_JUMP, start_line, end_line);
+    ctx.enter_block(LABEL_NO_JUMP, (start_line, end_line));
     for stmt in block.iter() {
         compile_stmt(ctx, stmt);
     }
@@ -658,12 +657,12 @@ fn compile_table_expr(ctx: &mut FunctionContext, mut reg: usize, table: &ExprNod
             let islast = i == fieldlen - 1;
             match field.key {
                 None => {
-                    if islast && is_vararg(field.val.inner()) {
+                    if islast && field.val.inner().is_vararg() {
                         lastvarargs = true;
-                        reg += compile_expr(ctx, reg, &field.val, &expr_ctx_none(-2));
+                        reg += compile_expr(ctx, reg, &field.val, &ExprContext::with_opt(-2));
                     } else {
                         array_count += 1;
-                        reg += compile_expr(ctx, reg, &field.val, &expr_ctx_none(0))
+                        reg += compile_expr(ctx, reg, &field.val, &ExprContext::with_opt(0))
                     }
                 }
                 Some(ref expr) => {
@@ -682,7 +681,7 @@ fn compile_table_expr(ctx: &mut FunctionContext, mut reg: usize, table: &ExprNod
                 reg = regbase;
                 let num = if flush == 0 { FIELDS_PER_FLUSH } else { flush };
                 let mut c = (array_count - 1) / FIELDS_PER_FLUSH + 1;
-                let b = if islast && is_vararg(field.val.inner()) { 0 } else { num };
+                let b = if islast && field.val.inner().is_vararg() { 0 } else { num };
                 let line = match field.key {
                     Some(ref expr) => start_line(expr),
                     None => start_line(&field.val),
@@ -719,11 +718,11 @@ fn compile_fncall_expr(ctx: &mut FunctionContext, mut reg: usize, expr: &ExprNod
             reg += compile_expr(ctx, reg, &func.func, expr_ctx);
             let len = func.args.len();
             for (i, arg) in func.args.iter().enumerate() {
-                islastvargs = (i == len - 1) && is_vararg(arg.inner());
+                islastvargs = (i == len - 1) && arg.inner().is_vararg();
                 if islastvargs {
-                    compile_expr(ctx, reg, arg, &expr_ctx_none(-2));
+                    compile_expr(ctx, reg, arg, &ExprContext::with_opt(-2));
                 } else {
-                    reg += compile_expr(ctx, reg, arg, &expr_ctx_none(0));
+                    reg += compile_expr(ctx, reg, arg, &ExprContext::with_opt(0));
                 }
             }
             (get_expr_name(&func.func.inner()), len)
@@ -740,11 +739,11 @@ fn compile_fncall_expr(ctx: &mut FunctionContext, mut reg: usize, expr: &ExprNod
             }
             let len = method.args.len();
             for (i, arg) in method.args.iter().enumerate() {
-                islastvargs = (i == len - 1) && is_vararg(arg.inner());
+                islastvargs = (i == len - 1) && arg.inner().is_vararg();
                 if islastvargs {
-                    compile_expr(ctx, reg, arg, &expr_ctx_none(-2));
+                    compile_expr(ctx, reg, arg, &ExprContext::with_opt(-2));
                 } else {
-                    reg += compile_expr(ctx, reg, arg, &expr_ctx_none(0));
+                    reg += compile_expr(ctx, reg, arg, &ExprContext::with_opt(0));
                 }
             }
             (method.method.clone(), len + 1)
@@ -771,7 +770,7 @@ fn compile_fncall_expr(ctx: &mut FunctionContext, mut reg: usize, expr: &ExprNod
 fn compile_binary_arith_expr(ctx: &mut FunctionContext, mut reg: usize,
                              opr: BinaryOpr, lhs: &ExprNode, rhs: &ExprNode,
                              expr_ctx: &ExprContext, line: u32) {
-    let a = save_reg(expr_ctx, reg);
+    let a = expr_ctx.savereg(reg);
     let mut b = reg;
     compile_expr_with_KMV_propagation(ctx, lhs, &mut reg, &mut b);
     let mut c = reg;
@@ -813,7 +812,7 @@ fn compile_binary_rel_expr_aux(ctx: &mut FunctionContext, mut reg: usize,
 fn compile_binary_rel_expr(ctx: &mut FunctionContext, mut reg: usize,
                            opr: BinaryOpr, lhs: &ExprNode, rhs: &ExprNode,
                            expr_ctx: &ExprContext, line: u32) {
-    let a = save_reg(expr_ctx, reg);
+    let a = expr_ctx.savereg(reg);
     let jumplabel = ctx.new_lable();
     compile_binary_rel_expr_aux(ctx, reg, opr, lhs, rhs, 1, jumplabel, line);
     ctx.code.add_ABC(OP_LOADBOOL, a as i32, 0, 1, line);
@@ -904,8 +903,8 @@ fn compile_binary_log_expr_aux(ctx: &mut FunctionContext, mut reg: usize,
                 reg += compile_expr(ctx, reg, expr, expr_ctx);
             } else {
                 let a = reg;
-                let sreg = save_reg(expr_ctx, a);
-                reg += compile_expr(ctx, reg, expr, &expr_ctx_none(0));
+                let sreg = expr_ctx.savereg(a);
+                reg += compile_expr(ctx, reg, expr, &ExprContext::with_opt(0));
                 if sreg == a {
                     ctx.code.add_ABC(OP_TEST, a as i32, 0, 0 ^ flip, start_line(expr));
                 } else {
@@ -920,7 +919,7 @@ fn compile_binary_log_expr_aux(ctx: &mut FunctionContext, mut reg: usize,
 fn compile_binary_log_expr(ctx: &mut FunctionContext, mut reg: usize,
                            opr: BinaryOpr, lhs: &ExprNode, rhs: &ExprNode,
                            expr_ctx: &ExprContext, line: u32) {
-    let a = save_reg(expr_ctx, reg);
+    let a = expr_ctx.savereg(reg);
     let endlabel = ctx.new_lable();
     let mut lb = Lblabels::new(ctx.new_lable(), ctx.new_lable(), endlabel, false);
     let nextcondlabel = ctx.new_lable();
@@ -980,10 +979,10 @@ fn compile_binaryop_expr(ctx: &mut FunctionContext, mut reg: usize, expr: &ExprN
                     _ => break
                 }
             }
-            let a = save_reg(expr_ctx, reg);
+            let a = expr_ctx.savereg(reg);
             let basereg = reg;
-            reg += compile_expr(ctx, reg, lhs, &expr_ctx_none(0));
-            reg += compile_expr(ctx, reg, rhs, &expr_ctx_none(0));
+            reg += compile_expr(ctx, reg, lhs, &ExprContext::with_opt(0));
+            reg += compile_expr(ctx, reg, rhs, &ExprContext::with_opt(0));
             let mut pc = ctx.code.last_pc();
             while pc != 0 && get_opcode(ctx.code.at(pc)) == OP_CONCAT {
                 ctx.code.pop();
@@ -1012,11 +1011,11 @@ fn compile_unaryop_expr(ctx: &mut FunctionContext, mut reg: usize, expr: &ExprNo
         Expr::UnaryOp(UnaryOpr::Not, ref subexpr) => {
             match subexpr.inner() {
                 &Expr::True => {
-                    ctx.code.add_ABC(OP_LOADBOOL, save_reg(expr_ctx, reg) as i32, 0, 0, start_line(expr));
+                    ctx.code.add_ABC(OP_LOADBOOL, expr_ctx.savereg(reg) as i32, 0, 0, start_line(expr));
                     return;
                 }
                 &Expr::False | &Expr::Nil => {
-                    ctx.code.add_ABC(OP_LOADBOOL, save_reg(expr_ctx, reg) as i32, 1, 0, start_line(expr));
+                    ctx.code.add_ABC(OP_LOADBOOL, expr_ctx.savereg(reg) as i32, 1, 0, start_line(expr));
                     return;
                 }
                 _ => (OP_NOT, subexpr)
@@ -1027,14 +1026,14 @@ fn compile_unaryop_expr(ctx: &mut FunctionContext, mut reg: usize, expr: &ExprNo
         _ => unreachable!()
     };
 
-    let a = save_reg(expr_ctx, reg);
+    let a = expr_ctx.savereg(reg);
     let mut b = reg;
     compile_expr_with_MV_propagation(ctx, operand, &mut reg, &mut b);
     ctx.code.add_ABC(opcode, a as i32, b as i32, 0, start_line(expr));
 }
 
 fn compile_expr(ctx: &mut FunctionContext, mut reg: usize, expr: &ExprNode, expr_ctx: &ExprContext) -> usize {
-    let sreg = save_reg(expr_ctx, reg);
+    let sreg = expr_ctx.savereg(reg);
     let mut sused: usize = if sreg < reg { 0 } else { 1 };
     let svreg = sreg as i32;
 
@@ -1101,7 +1100,7 @@ fn compile_expr(ctx: &mut FunctionContext, mut reg: usize, expr: &ExprNode, expr
             let (proto, upvals) = {
                 let mut childctx = FunctionContext::new(ctx.proto.source.clone(), Some(ctx));
                 compile_func_expr(childctx.borrow_mut(), params, stmts, expr_ctx, start_line(expr), end_line(expr));
-                let mut upval = VariableTable::new(0);
+                let mut upval = VarTable::new(0);
                 swap(&mut childctx.upval, &mut upval);
                 (childctx.proto, upval)
             };
@@ -1110,7 +1109,7 @@ fn compile_expr(ctx: &mut FunctionContext, mut reg: usize, expr: &ExprNode, expr
             ctx.proto.prototypes.push(proto);
             ctx.code.add_ABx(OP_CLOSURE, svreg, protono as i32, start_line(expr));
             for upv in &upvals.names {
-                let (op, mut index) = match ctx.block.variable_block(upv) {
+                let (op, mut index) = match ctx.block.find_var_block(upv) {
                     Some(blk) => {
                         blk.ref_upval = true;
                         (OP_MOVE, blk.locals.find(upv).unwrap() as i32)
@@ -1133,7 +1132,7 @@ fn compile_expr(ctx: &mut FunctionContext, mut reg: usize, expr: &ExprNode, expr
 }
 
 fn compile_expr_with_propagation(ctx: &mut FunctionContext, expr: &ExprNode, reg: &mut usize, save: &mut usize, loadk: bool) {
-    let incr = compile_expr(ctx, *reg, expr, &expr_ctx_none(0));
+    let incr = compile_expr(ctx, *reg, expr, &ExprContext::with_opt(0));
     match expr.inner() {
         Expr::BinaryOp(BinaryOpr::And, _, _) | Expr::BinaryOp(BinaryOpr::Or, _, _) => {
             *save = *reg;
@@ -1184,7 +1183,7 @@ fn compile_assign_stmt_left(ctx: &mut FunctionContext, lhs: &Vec<ExprNode>) -> (
             &Expr::AttrGet(ref obj, ref key) => {
                 let mut expr_ctx = ExprContext::new(ExprContextType::Table, REG_UNDEFINED, 0);
                 compile_expr_with_KMV_propagation(ctx, obj, &mut reg, &mut expr_ctx.reg);
-                reg += compile_expr(ctx, reg, key, &expr_ctx_none(0));
+                reg += compile_expr(ctx, reg, key, &ExprContext::with_opt(0));
                 let keyks = if let Expr::String(_) = key.inner() { true } else { false };
                 let assi_ctx = AssignContext::new(expr_ctx, reg, 0, keyks, false);
                 acs.push(assi_ctx);
@@ -1205,10 +1204,10 @@ fn compile_assign_stmt_right(ctx: &mut FunctionContext, mut reg: usize,
     let mut namesassigned = 0;
     while namesassigned < lennames {
         // multiple assign with vararg function
-        if is_vararg(rhs[namesassigned].inner()) && (lenexprs - namesassigned - 1) <= 0 {
+        if rhs[namesassigned].inner().is_vararg() && (lenexprs - namesassigned - 1) <= 0 {
             let opt = lennames - namesassigned - 1;
             let regstart = reg;
-            let incr = compile_expr(ctx, reg, &rhs[namesassigned], &expr_ctx_none(opt as i32));
+            let incr = compile_expr(ctx, reg, &rhs[namesassigned], &ExprContext::with_opt(opt as i32));
             reg += incr;
             for i in namesassigned..(namesassigned + incr) {
                 acs[i].nmove = true;
@@ -1256,7 +1255,7 @@ fn compile_assign_stmt_right(ctx: &mut FunctionContext, mut reg: usize,
     let rightreg = reg - 1;
     for i in namesassigned..lenexprs {
         let opt = if i != lenexprs - 1 { 0 } else { -1 };
-        reg += compile_expr(ctx, reg, &rhs[i], &expr_ctx_none(opt));
+        reg += compile_expr(ctx, reg, &rhs[i], &ExprContext::with_opt(opt));
     }
     (rightreg, acs)
 }
@@ -1319,9 +1318,9 @@ fn compile_reg_assignment(ctx: &mut FunctionContext, names: &Vec<String>, exprs:
     let lenexprs = exprs.len();
 
     let mut namesassigned = 0;
-    let mut expr_ctx = expr_ctx_none(0);
+    let mut expr_ctx = ExprContext::with_opt(0);
     while namesassigned < lennames && namesassigned < lenexprs {
-        if is_vararg(exprs[namesassigned].inner()) && (lenexprs - namesassigned - 1) <= 0 {
+        if exprs[namesassigned].inner().is_vararg() && (lenexprs - namesassigned - 1) <= 0 {
             let opt = nvars - namesassigned;
             expr_ctx.update(ExprContextType::Vararg, reg, (opt - 1) as i32);
             compile_expr(ctx, reg, &exprs[namesassigned], &expr_ctx);
@@ -1426,7 +1425,7 @@ fn compile_while_stmt(ctx: &mut FunctionContext, cond: &ExprNode, stmts: &Vec<St
     compile_branch_condition(ctx, regtop, cond, thenlabel, elselabel, false);
     let lastpc = ctx.code.last_pc();
     ctx.set_label_pc(thenlabel, lastpc);
-    ctx.enter_block(elselabel as usize, star_line, end_line);
+    ctx.enter_block(elselabel as usize, (star_line, end_line));
     compile_chunk(ctx, stmts);
     ctx.close_upval();
     ctx.code.add_ASBx(OP_JMP, 0, condlabel as i32, end_line);
@@ -1445,7 +1444,7 @@ fn compile_repeat_stmt(ctx: &mut FunctionContext, cond: &ExprNode, stmts: &Vec<S
     ctx.set_label_pc(initlabel, lastpc);
     ctx.set_label_pc(elselabel, lastpc);
 
-    ctx.enter_block(thenlabel as usize, star_line, end_line);
+    ctx.enter_block(thenlabel as usize, (star_line, end_line));
     compile_chunk(ctx, stmts);
     let regtop = ctx.reg_top();
     compile_branch_condition(ctx, regtop, cond, thenlabel, elselabel, false);
@@ -1493,9 +1492,9 @@ fn compile_if_stmt(ctx: &mut FunctionContext, ifelsethen: &IfThenElse, startline
 
 fn compile_nfor_stmt(ctx: &mut FunctionContext, nfor: &NumberFor, startline: u32, endline: u32) {
     let endlabel = ctx.new_lable();
-    let mut expr_ctx = expr_ctx_none(0);
+    let mut expr_ctx = ExprContext::with_opt(0);
 
-    ctx.enter_block(endlabel as usize, startline, endline);
+    ctx.enter_block(endlabel as usize, (startline, endline));
     let regtop = ctx.reg_top();
     let rindex = ctx.register_local_var(String::from("(for index)"));
     expr_ctx.update(ExprContextType::Local, rindex, 0);
@@ -1531,7 +1530,7 @@ fn compile_gfor_stmt(ctx: &mut FunctionContext, gfor: &GenericFor, startline: u3
     let fllabel = ctx.new_lable();
 
     let nnames = gfor.names.len();
-    ctx.enter_block(endlabel as usize, startline, endline);
+    ctx.enter_block(endlabel as usize, (startline, endline));
     let rgen = ctx.register_local_var(String::from("(for generator)"));
     ctx.register_local_var(String::from("(for state)"));
     ctx.register_local_var(String::from("(for control)"));
@@ -1573,7 +1572,7 @@ fn compile_return_stmt(ctx: &mut FunctionContext, exprs: &Vec<ExprNode>, startli
                 }
             }
             Expr::FuncCall(ref expr) => {
-                reg += compile_expr(ctx, reg, &exprs[0], &expr_ctx_none(-2));
+                reg += compile_expr(ctx, reg, &exprs[0], &ExprContext::with_opt(-2));
                 let lastpc = ctx.code.last_pc();
                 ctx.code.set_opcode(lastpc, OP_TAILCALL);
                 ctx.code.add_ABC(OP_RETURN, a as i32, 0, 0, startline);
@@ -1584,11 +1583,11 @@ fn compile_return_stmt(ctx: &mut FunctionContext, exprs: &Vec<ExprNode>, startli
     }
 
     for (i, expr) in exprs.iter().enumerate() {
-        if i == lenexprs - 1 && is_vararg(expr.inner()) {
-            compile_expr(ctx, reg, expr, &expr_ctx_none(-2));
+        if i == lenexprs - 1 && expr.inner().is_vararg() {
+            compile_expr(ctx, reg, expr, &ExprContext::with_opt(-2));
             lastisvararg = true;
         } else {
-            reg += compile_expr(ctx, reg, expr, &expr_ctx_none(0))
+            reg += compile_expr(ctx, reg, expr, &ExprContext::with_opt(0))
         }
     }
 
@@ -1623,10 +1622,10 @@ fn compile_stmt(ctx: &mut FunctionContext, stmt: &StmtNode) {
         &Stmt::LocalAssign(ref names, ref values) => compile_local_assign_stmt(ctx, names, values, startline),
         &Stmt::FuncCall(ref expr) | &Stmt::MethodCall(ref expr) => {
             let regtop = ctx.reg_top();
-            compile_fncall_expr(ctx, regtop, expr, &expr_ctx_none(-1));
+            compile_fncall_expr(ctx, regtop, expr, &ExprContext::with_opt(-1));
         }
         &Stmt::DoBlock(ref stmts) => {
-            ctx.enter_block(LABEL_NO_JUMP, startline, endline);
+            ctx.enter_block(LABEL_NO_JUMP, (startline, endline));
             compile_chunk(ctx, stmts);
             ctx.leave_block();
         }
@@ -1741,8 +1740,7 @@ fn patchcode(ctx: &mut FunctionContext) {
 
 fn compile_func_expr(ctx: &mut FunctionContext, params: &ParList, stmts: &Vec<StmtNode>,
                      expr_ctx: &ExprContext, startline: u32, endline: u32) {
-    ctx.proto.define_line = startline;
-    ctx.proto.last_define_line = endline;
+    ctx.proto.lineinfo = (startline, endline);
     if params.names.len() > (MAX_REGISTERS as usize) {
         panic!("register overflow")
     }
@@ -1782,7 +1780,7 @@ fn compile_func_expr(ctx: &mut FunctionContext, params: &ParList, stmts: &Vec<St
         let sv = if let Value::String(ref s) = **clv { s.clone() } else { String::new() };
         strv.push(sv);
     }
-    ctx.proto.str_constants = strv;
+    ctx.proto.strings = strv;
 }
 
 pub fn compile(stmts: Vec<StmtNode>, name: String) -> Result<Box<FunctionProto>> {
@@ -1790,6 +1788,6 @@ pub fn compile(stmts: Vec<StmtNode>, name: String) -> Result<Box<FunctionProto>>
     let mut ctx = FunctionContext::new(name, None);
     let mut par = ParList::new();
     par.set_vargs(true);
-    compile_func_expr(&mut ctx, &par, &stmts, &expr_ctx_none(0), 0, 0);
+    compile_func_expr(&mut ctx, &par, &stmts, &ExprContext::with_opt(0), 0, 0);
     Ok(ctx.proto)
 }
