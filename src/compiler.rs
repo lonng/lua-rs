@@ -127,6 +127,19 @@ fn int2fb(val: i32) -> i32 {
     ((e + 1) << 3) | (x - 8)
 }
 
+fn get_expr_name(expr: &Expr) -> String {
+    match expr {
+        Expr::Ident(ref s) => s.clone(),
+        Expr::AttrGet(ref key, _) => {
+            match key.inner() {
+                Expr::String(ref s) => s.clone(),
+                _ => "?".to_string()
+            }
+        }
+        _ => "?".to_string()
+    }
+}
+
 struct CodeStore {
     codes: Vec<u32>,
     lines: Vec<u32>,
@@ -267,14 +280,14 @@ impl Var {
 
 /// Variable table
 #[derive(Debug, PartialEq)]
-struct VarTable {
+struct VarRegistry {
     names: Vec<String>,
     offset: usize,
 }
 
-impl VarTable {
-    pub fn new(offset: usize) -> VarTable {
-        VarTable {
+impl VarRegistry {
+    pub fn new(offset: usize) -> VarRegistry {
+        VarRegistry {
             names: Vec::new(),
             offset,
         }
@@ -321,7 +334,7 @@ impl VarTable {
 
 #[derive(Debug, PartialEq)]
 struct Block {
-    locals: VarTable,
+    locals: VarRegistry,
     break_label: usize,
     parent: Option<Box<Block>>,
     ref_upval: bool,
@@ -329,7 +342,7 @@ struct Block {
 }
 
 impl Block {
-    pub fn new(locals: VarTable, break_label: usize, lineinfo: (u32, u32)) -> Box<Block> {
+    pub fn new(locals: VarRegistry, break_label: usize, lineinfo: (u32, u32)) -> Box<Block> {
         Box::new(Block {
             locals,
             break_label,
@@ -447,11 +460,11 @@ impl FunctionProto {
     }
 }
 
-struct FunctionContext<'p> {
+struct Compiler<'p> {
     proto: Box<FunctionProto>,
     code: CodeStore,
-    parent: Option<&'p FunctionContext<'p>>,
-    upval: VarTable,
+    parent: Option<&'p Compiler<'p>>,
+    upval: VarRegistry,
     block: Box<Block>,
 
     reg_top: usize,
@@ -459,22 +472,21 @@ struct FunctionContext<'p> {
     label_pc: HashMap<i32, usize>,
 }
 
-impl<'p> FunctionContext<'p> {
-    pub fn new(source: String, parent: Option<&'p FunctionContext>) -> Box<FunctionContext<'p>> {
-        let mut ctx = FunctionContext {
+impl<'p> Compiler<'p> {
+    pub fn new(source: String, parent: Option<&'p Compiler>) -> Box<Compiler<'p>> {
+        Box::new(Compiler {
             proto: FunctionProto::new(source),
             code: CodeStore::new(),
             parent,
-            upval: VarTable::new(0),
-            block: Block::new(VarTable::new(0), LABEL_NO_JUMP, (0, 0)),
+            upval: VarRegistry::new(0),
+            block: Block::new(VarRegistry::new(0), LABEL_NO_JUMP, (0, 0)),
             reg_top: 0,
             label_id: 1,
             label_pc: HashMap::new(),
-        };
-        Box::new(ctx)
+        })
     }
 
-    pub fn new_lable(&mut self) -> i32 {
+    pub fn new_label(&mut self) -> i32 {
         let r = self.label_id;
         self.label_id += 1;
         r
@@ -539,7 +551,7 @@ impl<'p> FunctionContext<'p> {
     }
 
     pub fn enter_block(&mut self, blabel: usize, lineinfo: (u32, u32)) {
-        let vtb = VarTable::new(self.reg_top());
+        let vtb = VarRegistry::new(self.reg_top());
         let mut blk = Block::new(vtb, blabel, lineinfo);
         swap(&mut blk, &mut self.block);
         self.block.set_parent(Some(blk));
@@ -577,1217 +589,1204 @@ impl<'p> FunctionContext<'p> {
         self.set_reg_top(top);
         closed
     }
-}
 
-fn compile_chunk(ctx: &mut FunctionContext, chunk: &Vec<StmtNode>) {
-    for stmt in chunk.iter() {
-        compile_stmt(ctx, stmt)
-    }
-}
-
-fn compile_block(ctx: &mut FunctionContext, block: &Vec<StmtNode>) {
-    if block.len() < 1 {
-        return;
-    }
-    let start_line = start_line(&block[0]);
-    let end_line = end_line(&block[block.len() - 1]);
-    ctx.enter_block(LABEL_NO_JUMP, (start_line, end_line));
-    for stmt in block.iter() {
-        compile_stmt(ctx, stmt);
-    }
-    ctx.leave_block();
-}
-
-fn get_ident_reftype(ctx: &FunctionContext, name: &String) -> ExprContextType {
-    // local variable
-    match ctx.find_local_var(name) {
-        Some(_) => ExprContextType::Local,
-        None => {
-            // upvalue or global variable
-            let t = match ctx.parent {
-                Some(ref pctx) => get_ident_reftype(pctx, name),
-                None => ExprContextType::Global,
-            };
-
-            if t == ExprContextType::Local {
-                ExprContextType::Upval
-            } else {
-                ExprContextType::Global
-            }
+    fn compile_chunk(&mut self, chunk: &Vec<StmtNode>) {
+        for stmt in chunk.iter() {
+            self.compile_stmt(stmt)
         }
     }
-}
 
-fn get_expr_name(expr: &Expr) -> String {
-    match expr {
-        Expr::Ident(ref s) => s.clone(),
-        Expr::AttrGet(ref key, _) => {
-            match key.inner() {
-                Expr::String(ref s) => s.clone(),
-                _ => "?".to_string()
-            }
+    fn compile_block(&mut self, block: &Vec<StmtNode>) {
+        if block.len() < 1 {
+            return;
         }
-        _ => "?".to_string()
+        let start_line = start_line(&block[0]);
+        let end_line = end_line(&block[block.len() - 1]);
+        self.enter_block(LABEL_NO_JUMP, (start_line, end_line));
+        for stmt in block.iter() {
+            self.compile_stmt(stmt);
+        }
+        self.leave_block();
     }
-}
 
-fn load_rk(ctx: &mut FunctionContext, reg: &mut usize, expr: &ExprNode, cnst: Rc<Value>) -> i32 {
-    let mut cindex = ctx.const_index(cnst) as i32;
-    if cindex < opMaxIndexRk {
-        rk_ask(cindex)
-    } else {
-        let mut ret = *reg;
-        *reg += 1;
-        ctx.code.add_ABx(OP_LOADK, ret as i32, cindex, start_line(expr));
-        ret as i32
-    }
-}
-
-fn compile_table_expr(ctx: &mut FunctionContext, mut reg: usize, table: &ExprNode, expr_ctx: &ExprContext) {
-    let tablereg = reg;
-    reg += 1;
-    ctx.code.add_ABC(OP_NEWTABLE, tablereg as i32, 0, 0, start_line(table));
-    let tablepc = ctx.code.last_pc();
-    let regbase = reg;
-    if let Expr::Table(ref fields) = table.inner() {
-        let mut array_count = 0;
-        let mut lastvarargs = false;
-        let fieldlen = fields.len();
-        for (i, field) in fields.iter().enumerate() {
-            let islast = i == fieldlen - 1;
-            match field.key {
-                None => {
-                    if islast && field.val.inner().is_vararg() {
-                        lastvarargs = true;
-                        reg += compile_expr(ctx, reg, &field.val, &ExprContext::with_opt(-2));
-                    } else {
-                        array_count += 1;
-                        reg += compile_expr(ctx, reg, &field.val, &ExprContext::with_opt(0))
-                    }
-                }
-                Some(ref expr) => {
-                    let regorg = reg;
-                    let mut b = reg;
-                    compile_expr_with_KMV_propagation(ctx, expr, &mut reg, &mut b);
-                    let mut c = reg;
-                    compile_expr_with_MV_propagation(ctx, expr, &mut reg, &mut c);
-                    let opcode = if let Expr::String(_) = expr.inner() { OP_SETTABLEKS } else { OP_SETTABLE };
-                    ctx.code.add_ABC(opcode, tablereg as i32, b as i32, c as i32, start_line(expr));
-                    reg = regorg;
-                }
-            }
-            let flush = array_count % FIELDS_PER_FLUSH;
-            if (array_count != 0 && (flush == 0 || islast)) || lastvarargs {
-                reg = regbase;
-                let num = if flush == 0 { FIELDS_PER_FLUSH } else { flush };
-                let mut c = (array_count - 1) / FIELDS_PER_FLUSH + 1;
-                let b = if islast && field.val.inner().is_vararg() { 0 } else { num };
-                let line = match field.key {
-                    Some(ref expr) => start_line(expr),
-                    None => start_line(&field.val),
+    fn get_ident_reftype(&self, name: &String) -> ExprContextType {
+        // local variable
+        match self.find_local_var(name) {
+            Some(_) => ExprContextType::Local,
+            None => {
+                // upvalue or global variable
+                let t = match self.parent {
+                    Some(ref parent) => parent.get_ident_reftype(name),
+                    None => ExprContextType::Global,
                 };
-                if c > 511 {
-                    c = 0;
-                }
-                ctx.code.add_ABC(OP_SETLIST, tablereg as i32, b as i32, c as i32, line);
-                if c == 0 {
-                    ctx.code.add(0, line);
-                }
-            }
-        }
 
-        ctx.code.set_argb(tablepc, int2fb(tablereg as i32));
-        ctx.code.set_argc(tablepc, int2fb((fieldlen - tablereg) as i32));
-        if expr_ctx.typ == ExprContextType::Local && expr_ctx.reg != tablereg {
-            ctx.code.add_ABC(OP_MOVE, expr_ctx.reg as i32, tablereg as i32, 0, start_line(table))
-        }
-    } else {
-        unreachable!()
-    }
-}
-
-fn compile_fncall_expr(ctx: &mut FunctionContext, mut reg: usize, expr: &ExprNode, expr_ctx: &ExprContext) -> usize {
-    if expr_ctx.typ == ExprContextType::Local && expr_ctx.reg == ctx.proto.param_count as usize - 1 {
-        reg = expr_ctx.reg
-    }
-    let funcreg = reg;
-    let mut islastvargs = false;
-
-    let (name, argc) = match expr.inner() {
-        Expr::FuncCall(ref func) => {
-            reg += compile_expr(ctx, reg, &func.func, expr_ctx);
-            let len = func.args.len();
-            for (i, arg) in func.args.iter().enumerate() {
-                islastvargs = (i == len - 1) && arg.inner().is_vararg();
-                if islastvargs {
-                    compile_expr(ctx, reg, arg, &ExprContext::with_opt(-2));
+                if t == ExprContextType::Local {
+                    ExprContextType::Upval
                 } else {
-                    reg += compile_expr(ctx, reg, arg, &ExprContext::with_opt(0));
+                    ExprContextType::Global
                 }
             }
-            (get_expr_name(&func.func.inner()), len)
         }
-        Expr::MethodCall(ref method) => {
-            let mut b = reg;
-            compile_expr_with_MV_propagation(ctx, &method.receiver, &mut reg, &mut b);
-            let c = load_rk(ctx, &mut reg, expr, Rc::new(Value::String(method.method.clone())));
-            ctx.code.add_ABC(OP_SELF, funcreg as i32, b as i32, c, start_line(expr));
-            reg = b + 1;
-            let reg2 = funcreg + 2;
-            if reg2 > reg {
-                reg = reg2
-            }
-            let len = method.args.len();
-            for (i, arg) in method.args.iter().enumerate() {
-                islastvargs = (i == len - 1) && arg.inner().is_vararg();
-                if islastvargs {
-                    compile_expr(ctx, reg, arg, &ExprContext::with_opt(-2));
-                } else {
-                    reg += compile_expr(ctx, reg, arg, &ExprContext::with_opt(0));
-                }
-            }
-            (method.method.clone(), len + 1)
-        }
-        _ => unreachable!()
-    };
-
-    let b = if islastvargs { 0 } else { argc + 1 };
-    ctx.code.add_ABC(OP_CALL, funcreg as i32, b as i32, expr_ctx.opt + 2, start_line(expr));
-    ctx.proto.debug_calls.push(DebugCall::new(name, ctx.code.last_pc()));
-
-    if expr_ctx.opt == 2 && expr_ctx.typ == ExprContextType::Local && funcreg != expr_ctx.reg {
-        ctx.code.add_ABC(OP_MOVE, expr_ctx.reg as i32, funcreg as i32, 0, start_line(expr));
-        return 1;
     }
 
-    if ctx.reg_top() > (funcreg + 2 + expr_ctx.opt as usize) || expr_ctx.opt < -1 {
-        return 0;
-    }
-
-    (expr_ctx.opt + 1) as usize
-}
-
-fn compile_binary_arith_expr(ctx: &mut FunctionContext, mut reg: usize,
-                             opr: BinaryOpr, lhs: &ExprNode, rhs: &ExprNode,
-                             expr_ctx: &ExprContext, line: u32) {
-    let a = expr_ctx.savereg(reg);
-    let mut b = reg;
-    compile_expr_with_KMV_propagation(ctx, lhs, &mut reg, &mut b);
-    let mut c = reg;
-    compile_expr_with_MV_propagation(ctx, rhs, &mut reg, &mut c);
-
-    let opcode = match opr {
-        BinaryOpr::Add => OP_ADD,
-        BinaryOpr::Sub => OP_SUB,
-        BinaryOpr::Mul => OP_MUL,
-        BinaryOpr::Div => OP_DIV,
-        BinaryOpr::Mod => OP_MOD,
-        BinaryOpr::Pow => OP_POW,
-        _ => unreachable!()
-    };
-    ctx.code.add_ABC(opcode, a as i32, b as i32, c as i32, line);
-}
-
-fn compile_binary_rel_expr_aux(ctx: &mut FunctionContext, mut reg: usize,
-                               opr: BinaryOpr, lhs: &ExprNode, rhs: &ExprNode,
-                               flip: i32, jumplabel: i32, line: u32) {
-    let mut b = reg;
-    compile_expr_with_KMV_propagation(ctx, lhs, &mut reg, &mut b);
-    let mut c = reg;
-    compile_expr_with_MV_propagation(ctx, rhs, &mut reg, &mut c);
-
-    let inst = match opr {
-        BinaryOpr::Eq => ABC(OP_EQ, 0 ^ flip, b as i32, c as i32),
-        BinaryOpr::NE => ABC(OP_EQ, 1 ^ flip, b as i32, c as i32),
-        BinaryOpr::LT => ABC(OP_LT, 0 ^ flip, b as i32, c as i32),
-        BinaryOpr::GT => ABC(OP_LT, 0 ^ flip, c as i32, b as i32),
-        BinaryOpr::LE => ABC(OP_LE, 0 ^ flip, b as i32, c as i32),
-        BinaryOpr::GE => ABC(OP_LE, 0 ^ flip, c as i32, b as i32),
-        _ => unreachable!()
-    };
-    ctx.code.add(inst, line);
-    ctx.code.add_ASBx(OP_JMP, 0, jumplabel, line);
-}
-
-fn compile_binary_rel_expr(ctx: &mut FunctionContext, mut reg: usize,
-                           opr: BinaryOpr, lhs: &ExprNode, rhs: &ExprNode,
-                           expr_ctx: &ExprContext, line: u32) {
-    let a = expr_ctx.savereg(reg);
-    let jumplabel = ctx.new_lable();
-    compile_binary_rel_expr_aux(ctx, reg, opr, lhs, rhs, 1, jumplabel, line);
-    ctx.code.add_ABC(OP_LOADBOOL, a as i32, 0, 1, line);
-    let lastpc = ctx.code.last_pc();
-    ctx.set_label_pc(jumplabel, lastpc);
-    ctx.code.add_ABC(OP_LOADBOOL, a as i32, 1, 0, line);
-}
-
-fn compile_binary_log_expr_aux(ctx: &mut FunctionContext, mut reg: usize,
-                               expr: &ExprNode, expr_ctx: &ExprContext,
-                               thenlabel: i32, elselabel: i32, hasnextcond: bool, lb: &mut Lblabels) {
-    let mut flip = 0;
-    let mut jumplabel = elselabel;
-    if hasnextcond {
-        flip - 1;
-        jumplabel = thenlabel;
-    }
-
-    match expr.inner() {
-        &Expr::False => {
-            if elselabel == lb.e {
-                ctx.code.add_ASBx(OP_JMP, 0, lb.f, start_line(expr));
-                lb.b = true;
-            } else {
-                ctx.code.add_ASBx(OP_JMP, 0, elselabel, start_line(expr));
-            }
-        }
-        &Expr::True => {
-            if elselabel == lb.e {
-                ctx.code.add_ASBx(OP_JMP, 0, lb.t, start_line(expr));
-                lb.b = true;
-            } else {
-                ctx.code.add_ASBx(OP_JMP, 0, thenlabel, start_line(expr));
-            }
-        }
-        &Expr::Nil => {
-            if elselabel == lb.e {
-                compile_expr(ctx, reg, expr, expr_ctx);
-                ctx.code.add_ASBx(OP_JMP, 0, lb.e, start_line(expr));
-            } else {
-                ctx.code.add_ASBx(OP_JMP, 0, elselabel, start_line(expr));
-            }
-        }
-        &Expr::String(_) | &Expr::Number(_) => {
-            if thenlabel == lb.e {
-                compile_expr(ctx, reg, expr, expr_ctx);
-                ctx.code.add_ASBx(OP_JMP, 0, lb.e, start_line(expr));
-            } else {
-                ctx.code.add_ASBx(OP_JMP, 0, thenlabel, start_line(expr));
-            }
-        }
-        &Expr::BinaryOp(BinaryOpr::And, ref lhs, ref rhs) => {
-            let nextcondlabel = ctx.new_lable();
-            compile_binary_log_expr_aux(ctx, reg, lhs, expr_ctx, nextcondlabel, elselabel, false, lb);
-            let lastpc = ctx.code.last_pc();
-            ctx.set_label_pc(nextcondlabel, lastpc);
-            compile_binary_log_expr_aux(ctx, reg, rhs, expr_ctx, thenlabel, elselabel, hasnextcond, lb);
-        }
-        &Expr::BinaryOp(BinaryOpr::Or, ref lhs, ref rhs) => {
-            let nextcondlabel = ctx.new_lable();
-            compile_binary_log_expr_aux(ctx, reg, lhs, expr_ctx, thenlabel, nextcondlabel, true, lb);
-            let lastpc = ctx.code.last_pc();
-            ctx.set_label_pc(nextcondlabel, lastpc);
-            compile_binary_log_expr_aux(ctx, reg, rhs, expr_ctx, thenlabel, elselabel, hasnextcond, lb);
-        }
-        Expr::BinaryOp(ref opr, ref lhs, ref rhs)
-        if opr == &BinaryOpr::Eq ||
-            opr == &BinaryOpr::LT ||
-            opr == &BinaryOpr::LE ||
-            opr == &BinaryOpr::NE ||
-            opr == &BinaryOpr::GT ||
-            opr == &BinaryOpr::GE => {
-            if thenlabel == elselabel {
-                flip ^= 1;
-                jumplabel = lb.t;
-                lb.b = true;
-            } else if thenlabel == lb.e {
-                jumplabel = lb.t;
-                lb.b = true;
-            } else if elselabel == lb.e {
-                jumplabel = lb.f;
-                lb.b = true;
-            }
-            compile_binary_rel_expr_aux(ctx, reg, *opr, lhs, rhs, flip, jumplabel, start_line(expr));
-        }
-        _ => {
-            if !hasnextcond && thenlabel == elselabel {
-                reg += compile_expr(ctx, reg, expr, expr_ctx);
-            } else {
-                let a = reg;
-                let sreg = expr_ctx.savereg(a);
-                reg += compile_expr(ctx, reg, expr, &ExprContext::with_opt(0));
-                if sreg == a {
-                    ctx.code.add_ABC(OP_TEST, a as i32, 0, 0 ^ flip, start_line(expr));
-                } else {
-                    ctx.code.add_ABC(OP_TESTSET, sreg as i32, a as i32, 0 ^ flip, start_line(expr));
-                }
-            }
-            ctx.code.add_ASBx(OP_JMP, 0, jumplabel, start_line(expr))
-        }
-    }
-}
-
-fn compile_binary_log_expr(ctx: &mut FunctionContext, mut reg: usize,
-                           opr: BinaryOpr, lhs: &ExprNode, rhs: &ExprNode,
-                           expr_ctx: &ExprContext, line: u32) {
-    let a = expr_ctx.savereg(reg);
-    let endlabel = ctx.new_lable();
-    let mut lb = Lblabels::new(ctx.new_lable(), ctx.new_lable(), endlabel, false);
-    let nextcondlabel = ctx.new_lable();
-    match opr {
-        BinaryOpr::And => {
-            compile_binary_log_expr_aux(ctx, reg, lhs, expr_ctx, nextcondlabel, endlabel, false, &mut lb);
-            let lastpc = ctx.code.last_pc();
-            ctx.set_label_pc(nextcondlabel, lastpc);
-            compile_binary_log_expr_aux(ctx, reg, rhs, expr_ctx, endlabel, endlabel, false, &mut lb);
-        }
-        BinaryOpr::Or => {
-            compile_binary_log_expr_aux(ctx, reg, lhs, expr_ctx, endlabel, nextcondlabel, true, &mut lb);
-            let lastpc = ctx.code.last_pc();
-            ctx.set_label_pc(nextcondlabel, lastpc);
-            compile_binary_log_expr_aux(ctx, reg, rhs, expr_ctx, endlabel, endlabel, false, &mut lb);
-        }
-        _ => unreachable!()
-    }
-
-    if lb.b {
-        let lastpc = ctx.code.last_pc();
-        ctx.set_label_pc(lb.f, lastpc);
-        ctx.code.add_ABC(OP_LOADBOOL, a as i32, 0, 1, line);
-        let lastpc = ctx.code.last_pc();
-        ctx.set_label_pc(lb.t, lastpc);
-        ctx.code.add_ABC(OP_LOADBOOL, a as i32, 1, 0, line);
-    }
-
-    let lastinst = ctx.code.last();
-    if get_opcode(lastinst) == OP_JMP && get_argsbx(lastinst) == endlabel {
-        ctx.code.pop();
-    }
-    let lastpc = ctx.code.last_pc();
-    ctx.set_label_pc(endlabel, lastpc);
-}
-
-fn compile_binaryop_expr(ctx: &mut FunctionContext, mut reg: usize, expr: &ExprNode, expr_ctx: &ExprContext) {
-    match expr.inner() {
-        Expr::BinaryOp(ref opr, ref lhs, ref rhs)
-        if opr == &BinaryOpr::Add ||
-            opr == &BinaryOpr::Sub ||
-            opr == &BinaryOpr::Mul ||
-            opr == &BinaryOpr::Div ||
-            opr == &BinaryOpr::Mod ||
-            opr == &BinaryOpr::Pow => {
-            compile_binary_arith_expr(ctx, reg, *opr, lhs, rhs, expr_ctx, start_line(expr));
-        }
-        Expr::BinaryOp(BinaryOpr::Concat, ref lhs, ref rhs) => {
-            let mut crange = 1;
-            let mut current = rhs;
-            loop {
-                match current.inner() {
-                    Expr::BinaryOp(BinaryOpr::Concat, ref sublhs, ref subrhs) => {
-                        crange += 1;
-                        current = subrhs;
-                    }
-                    _ => break
-                }
-            }
-            let a = expr_ctx.savereg(reg);
-            let basereg = reg;
-            reg += compile_expr(ctx, reg, lhs, &ExprContext::with_opt(0));
-            reg += compile_expr(ctx, reg, rhs, &ExprContext::with_opt(0));
-            let mut pc = ctx.code.last_pc();
-            while pc != 0 && get_opcode(ctx.code.at(pc)) == OP_CONCAT {
-                ctx.code.pop();
-                pc -= 1;
-            }
-            ctx.code.add_ABC(OP_CONCAT, a as i32, basereg as i32, (basereg as i32 + crange), start_line(expr));
-        }
-        Expr::BinaryOp(ref opr, ref lhs, ref rhs)
-        if opr == &BinaryOpr::Eq ||
-            opr == &BinaryOpr::LT ||
-            opr == &BinaryOpr::LE ||
-            opr == &BinaryOpr::NE ||
-            opr == &BinaryOpr::GT ||
-            opr == &BinaryOpr::GE => {
-            compile_binary_rel_expr(ctx, reg, *opr, lhs, rhs, expr_ctx, start_line(expr));
-        }
-        Expr::BinaryOp(opr, ref lhs, ref rhs) if opr == &BinaryOpr::And || opr == &BinaryOpr::Or => {
-            compile_binary_log_expr(ctx, reg, *opr, lhs, rhs, expr_ctx, start_line(expr));
-        }
-        _ => unreachable!()
-    }
-}
-
-fn compile_unaryop_expr(ctx: &mut FunctionContext, mut reg: usize, expr: &ExprNode, expr_ctx: &ExprContext) {
-    let (opcode, operand) = match expr.inner() {
-        Expr::UnaryOp(UnaryOpr::Not, ref subexpr) => {
-            match subexpr.inner() {
-                &Expr::True => {
-                    ctx.code.add_ABC(OP_LOADBOOL, expr_ctx.savereg(reg) as i32, 0, 0, start_line(expr));
-                    return;
-                }
-                &Expr::False | &Expr::Nil => {
-                    ctx.code.add_ABC(OP_LOADBOOL, expr_ctx.savereg(reg) as i32, 1, 0, start_line(expr));
-                    return;
-                }
-                _ => (OP_NOT, subexpr)
-            }
-        }
-        Expr::UnaryOp(UnaryOpr::Length, ref subexpr) => (OP_LEN, subexpr),
-        Expr::UnaryOp(UnaryOpr::Minus, ref subexpr) => (OP_UNM, subexpr),
-        _ => unreachable!()
-    };
-
-    let a = expr_ctx.savereg(reg);
-    let mut b = reg;
-    compile_expr_with_MV_propagation(ctx, operand, &mut reg, &mut b);
-    ctx.code.add_ABC(opcode, a as i32, b as i32, 0, start_line(expr));
-}
-
-fn compile_expr(ctx: &mut FunctionContext, mut reg: usize, expr: &ExprNode, expr_ctx: &ExprContext) -> usize {
-    let sreg = expr_ctx.savereg(reg);
-    let mut sused: usize = if sreg < reg { 0 } else { 1 };
-    let svreg = sreg as i32;
-
-    // TODO: const value
-    match expr.inner() {
-        &Expr::True => ctx.code.add_ABC(OP_LOADBOOL, 1, 0, 0, start_line(expr)),
-        &Expr::False => ctx.code.add_ABC(OP_LOADBOOL, 0, 0, 0, start_line(expr)),
-        &Expr::Nil => ctx.code.add_ABC(OP_LOADNIL, svreg, svreg, 0, start_line(expr)),
-        &Expr::Number(f) => {
-            let num = ctx.const_index(Rc::new(Value::Number(f)));
-            ctx.code.add_ABx(OP_LOADBOOL, svreg, num as i32, start_line(expr))
-        }
-        &Expr::String(ref s) => {
-            let index = ctx.const_index(Rc::new(Value::String(s.clone())));
-            ctx.code.add_ABx(OP_LOADK, svreg, index as i32, start_line(expr))
-        }
-        &Expr::Dots => {
-            if ctx.proto.is_vararg == 0 {
-                panic!("cannot use '...' outside a vararg function")
-            }
-            ctx.proto.is_vararg &= !VARARG_NEED;
-            ctx.code.add_ABC(OP_VARARG, svreg, expr_ctx.opt + 2, 0, start_line(expr));
-            sused = if ctx.reg_top() > (expr_ctx.opt + 2) as usize || expr_ctx.opt < -1 {
-                0
-            } else {
-                (svreg + 1 + expr_ctx.opt) as usize - reg
-            }
-        }
-        &Expr::Ident(ref s) => {
-            let identtype = get_ident_reftype(ctx, s);
-            match identtype {
-                ExprContextType::Global => {
-                    let index = ctx.const_index(Rc::new(Value::String(s.clone())));
-                    ctx.code.add_ABx(OP_LOADK, svreg, index as i32, start_line(expr))
-                }
-                ExprContextType::Upval => {
-                    let index = ctx.upval.register_unique(s.clone());
-                    ctx.code.add_ABC(OP_GETUPVAL, svreg, index as i32, 0, start_line(expr));
-                }
-                ExprContextType::Local => {
-                    let index = match ctx.find_local_var(s) {
-                        Some(i) => i as i32,
-                        None => -1
-                    };
-                    ctx.code.add_ABC(OP_MOVE, svreg, index, 0, start_line(expr));
-                }
-                _ => unreachable!()
-            }
-        }
-        &Expr::AttrGet(ref obj, ref key) => {
-            let a = svreg;
-            let mut b = reg.clone();
-            compile_expr_with_MV_propagation(ctx, obj, &mut reg, &mut b);
-            let mut c = reg.clone();
-            compile_expr_with_KMV_propagation(ctx, key, &mut reg, &mut c);
-            let opcode = if let &Expr::String(_) = key.inner() { OP_GETTABLEKS } else { OP_GETTABLE };
-            ctx.code.add_ABC(opcode, a, b as i32, c as i32, start_line(expr));
-        }
-        &Expr::Table(_) => compile_table_expr(ctx, reg, expr, expr_ctx),
-        &Expr::FuncCall(_) | &Expr::MethodCall(_) => sused = compile_fncall_expr(ctx, reg, expr, expr_ctx),
-        &Expr::BinaryOp(_, _, _) => compile_binaryop_expr(ctx, reg, expr, expr_ctx),
-        &Expr::UnaryOp(_, _) => compile_unaryop_expr(ctx, reg, expr, expr_ctx),
-        &Expr::Function(ref params, ref stmts) => {
-            let (proto, upvals) = {
-                let mut childctx = FunctionContext::new(ctx.proto.source.clone(), Some(ctx));
-                compile_func_expr(childctx.borrow_mut(), params, stmts, expr_ctx, start_line(expr), end_line(expr));
-                let mut upval = VarTable::new(0);
-                swap(&mut childctx.upval, &mut upval);
-                (childctx.proto, upval)
-            };
-
-            let protono = ctx.proto.prototypes.len();
-            ctx.proto.prototypes.push(proto);
-            ctx.code.add_ABx(OP_CLOSURE, svreg, protono as i32, start_line(expr));
-            for upv in &upvals.names {
-                let (op, mut index) = match ctx.block.find_var_block(upv) {
-                    Some(blk) => {
-                        blk.ref_upval = true;
-                        (OP_MOVE, blk.locals.find(upv).unwrap() as i32)
-                    }
-                    None => {
-                        match ctx.upval.find(upv) {
-                            Some(i) => (OP_GETUPVAL, i as i32),
-                            None => (OP_GETUPVAL, -1)
-                        }
-                    }
-                };
-                if index == -1 {
-                    index = ctx.upval.register_unique(upv.clone()) as i32;
-                }
-                ctx.code.add_ABC(op, 0, index, 0, start_line(expr));
-            }
-        }
-    };
-    sused
-}
-
-fn compile_expr_with_propagation(ctx: &mut FunctionContext, expr: &ExprNode, reg: &mut usize, save: &mut usize, loadk: bool) {
-    let incr = compile_expr(ctx, *reg, expr, &ExprContext::with_opt(0));
-    match expr.inner() {
-        Expr::BinaryOp(BinaryOpr::And, _, _) | Expr::BinaryOp(BinaryOpr::Or, _, _) => {
-            *save = *reg;
-            *reg += incr;
-        }
-        _ => {
-            let top = ctx.reg_top();
-            ctx.code.propagate_KMV(top, save, reg, incr, loadk)
-        }
-    }
-}
-
-fn compile_expr_with_KMV_propagation(ctx: &mut FunctionContext, expr: &ExprNode, reg: &mut usize, save: &mut usize) {
-    compile_expr_with_propagation(ctx, expr, reg, save, true)
-}
-
-fn compile_expr_with_MV_propagation(ctx: &mut FunctionContext, expr: &ExprNode, reg: &mut usize, save: &mut usize) {
-    compile_expr_with_propagation(ctx, expr, reg, save, false)
-}
-
-fn compile_assign_stmt_left(ctx: &mut FunctionContext, lhs: &Vec<ExprNode>) -> (usize, Vec<AssignContext>) {
-    let mut reg = ctx.reg_top();
-    let len = lhs.len();
-    let mut acs = Vec::<AssignContext>::with_capacity(len);
-    for (i, expr) in lhs.iter().enumerate() {
-        let islast = i == len - 1;
-        match expr.inner() {
-            &Expr::Ident(ref s) => {
-                let identtype = get_ident_reftype(ctx, s);
-                let mut expr_ctx = ExprContext::new(identtype, REG_UNDEFINED, 0);
-                match identtype {
-                    ExprContextType::Global => {
-                        ctx.const_index(Rc::new(Value::String(s.clone())));
-                    }
-                    ExprContextType::Upval => {
-                        ctx.upval.register_unique(s.clone());
-                    }
-                    ExprContextType::Local => {
-                        if islast {
-                            // TODO: check
-                            expr_ctx.reg = ctx.find_local_var(s).unwrap();
-                        }
-                    }
-                    _ => unreachable!("invalid lhs identity type")
-                };
-                acs.push(AssignContext::new(expr_ctx, 0, 0, false, false))
-            }
-            &Expr::AttrGet(ref obj, ref key) => {
-                let mut expr_ctx = ExprContext::new(ExprContextType::Table, REG_UNDEFINED, 0);
-                compile_expr_with_KMV_propagation(ctx, obj, &mut reg, &mut expr_ctx.reg);
-                reg += compile_expr(ctx, reg, key, &ExprContext::with_opt(0));
-                let keyks = if let Expr::String(_) = key.inner() { true } else { false };
-                let assi_ctx = AssignContext::new(expr_ctx, reg, 0, keyks, false);
-                acs.push(assi_ctx);
-            }
-            _ => unreachable!("invalid left expression")
-        }
-    };
-
-    (reg, acs)
-}
-
-fn compile_assign_stmt_right(ctx: &mut FunctionContext, mut reg: usize,
-                             lhs: &Vec<ExprNode>,
-                             rhs: &Vec<ExprNode>,
-                             mut acs: Vec<AssignContext>) -> (usize, Vec<AssignContext>) {
-    let lennames = lhs.len();
-    let lenexprs = rhs.len();
-    let mut namesassigned = 0;
-    while namesassigned < lennames {
-        // multiple assign with vararg function
-        if rhs[namesassigned].inner().is_vararg() && (lenexprs - namesassigned - 1) <= 0 {
-            let opt = lennames - namesassigned - 1;
-            let regstart = reg;
-            let incr = compile_expr(ctx, reg, &rhs[namesassigned], &ExprContext::with_opt(opt as i32));
-            reg += incr;
-            for i in namesassigned..(namesassigned + incr) {
-                acs[i].nmove = true;
-                if acs[i].expr_ctx.typ == ExprContextType::Table {
-                    acs[i].valrk = regstart + (1 - namesassigned);
-                }
-            }
-            namesassigned = lennames;
-            break;
-        }
-
-        // regular assignment
-        let mut ac = acs[namesassigned];
-        let mut nilexprs: Vec<ExprNode> = vec![];
-        let expr = if namesassigned >= lenexprs {
-            let mut expr = ExprNode::new(Expr::Nil);
-            expr.set_line(start_line(&lhs[namesassigned]));
-            expr.set_last_line(end_line(&lhs[namesassigned]));
-            nilexprs.push(expr);
-            &nilexprs[0]
+    fn load_rk(&mut self, reg: &mut usize, expr: &ExprNode, cnst: Rc<Value>) -> i32 {
+        let mut cindex = self.const_index(cnst) as i32;
+        if cindex < opMaxIndexRk {
+            rk_ask(cindex)
         } else {
-            &rhs[namesassigned]
+            let mut ret = *reg;
+            *reg += 1;
+            self.code.add_ABx(OP_LOADK, ret as i32, cindex, start_line(expr));
+            ret as i32
+        }
+    }
+
+    fn compile_table_expr(&mut self, mut reg: usize, table: &ExprNode, expr_ctx: &ExprContext) {
+        let tablereg = reg;
+        reg += 1;
+        self.code.add_ABC(OP_NEWTABLE, tablereg as i32, 0, 0, start_line(table));
+        let tablepc = self.code.last_pc();
+        let regbase = reg;
+        if let Expr::Table(ref fields) = table.inner() {
+            let mut array_count = 0;
+            let mut lastvarargs = false;
+            let fieldlen = fields.len();
+            for (i, field) in fields.iter().enumerate() {
+                let islast = i == fieldlen - 1;
+                match field.key {
+                    None => {
+                        if islast && field.val.inner().is_vararg() {
+                            lastvarargs = true;
+                            reg += self.compile_expr(reg, &field.val, &ExprContext::with_opt(-2));
+                        } else {
+                            array_count += 1;
+                            reg += self.compile_expr(reg, &field.val, &ExprContext::with_opt(0))
+                        }
+                    }
+                    Some(ref expr) => {
+                        let regorg = reg;
+                        let mut b = reg;
+                        self.compile_expr_with_KMV_propagation(expr, &mut reg, &mut b);
+                        let mut c = reg;
+                        self.compile_expr_with_MV_propagation(expr, &mut reg, &mut c);
+                        let opcode = if let Expr::String(_) = expr.inner() { OP_SETTABLEKS } else { OP_SETTABLE };
+                        self.code.add_ABC(opcode, tablereg as i32, b as i32, c as i32, start_line(expr));
+                        reg = regorg;
+                    }
+                }
+                let flush = array_count % FIELDS_PER_FLUSH;
+                if (array_count != 0 && (flush == 0 || islast)) || lastvarargs {
+                    reg = regbase;
+                    let num = if flush == 0 { FIELDS_PER_FLUSH } else { flush };
+                    let mut c = (array_count - 1) / FIELDS_PER_FLUSH + 1;
+                    let b = if islast && field.val.inner().is_vararg() { 0 } else { num };
+                    let line = match field.key {
+                        Some(ref expr) => start_line(expr),
+                        None => start_line(&field.val),
+                    };
+                    if c > 511 {
+                        c = 0;
+                    }
+                    self.code.add_ABC(OP_SETLIST, tablereg as i32, b as i32, c as i32, line);
+                    if c == 0 {
+                        self.code.add(0, line);
+                    }
+                }
+            }
+
+            self.code.set_argb(tablepc, int2fb(tablereg as i32));
+            self.code.set_argc(tablepc, int2fb((fieldlen - tablereg) as i32));
+            if expr_ctx.typ == ExprContextType::Local && expr_ctx.reg != tablereg {
+                self.code.add_ABC(OP_MOVE, expr_ctx.reg as i32, tablereg as i32, 0, start_line(table))
+            }
+        } else {
+            unreachable!()
+        }
+    }
+
+    fn compile_fncall_expr(&mut self, mut reg: usize, expr: &ExprNode, expr_ctx: &ExprContext) -> usize {
+        if expr_ctx.typ == ExprContextType::Local && expr_ctx.reg == self.proto.param_count as usize - 1 {
+            reg = expr_ctx.reg
+        }
+        let funcreg = reg;
+        let mut islastvargs = false;
+
+        let (name, argc) = match expr.inner() {
+            Expr::FuncCall(ref func) => {
+                reg += self.compile_expr(reg, &func.func, expr_ctx);
+                let len = func.args.len();
+                for (i, arg) in func.args.iter().enumerate() {
+                    islastvargs = (i == len - 1) && arg.inner().is_vararg();
+                    if islastvargs {
+                        self.compile_expr(reg, arg, &ExprContext::with_opt(-2));
+                    } else {
+                        reg += self.compile_expr(reg, arg, &ExprContext::with_opt(0));
+                    }
+                }
+                (get_expr_name(&func.func.inner()), len)
+            }
+            Expr::MethodCall(ref method) => {
+                let mut b = reg;
+                self.compile_expr_with_MV_propagation(&method.receiver, &mut reg, &mut b);
+                let c = self.load_rk(&mut reg, expr, Rc::new(Value::String(method.method.clone())));
+                self.code.add_ABC(OP_SELF, funcreg as i32, b as i32, c, start_line(expr));
+                reg = b + 1;
+                let reg2 = funcreg + 2;
+                if reg2 > reg {
+                    reg = reg2
+                }
+                let len = method.args.len();
+                for (i, arg) in method.args.iter().enumerate() {
+                    islastvargs = (i == len - 1) && arg.inner().is_vararg();
+                    if islastvargs {
+                        self.compile_expr(reg, arg, &ExprContext::with_opt(-2));
+                    } else {
+                        reg += self.compile_expr(reg, arg, &ExprContext::with_opt(0));
+                    }
+                }
+                (method.method.clone(), len + 1)
+            }
+            _ => unreachable!()
         };
 
-        let idx = reg;
-        let incr = compile_expr(ctx, reg, &expr, &ac.expr_ctx);
-        if ac.expr_ctx.typ == ExprContextType::Table {
-            match expr.inner() {
-                Expr::BinaryOp(BinaryOpr::And, _, _) | Expr::BinaryOp(BinaryOpr::Or, _, _) => {
-                    let regtop = ctx.reg_top();
-                    ctx.code.propagate_KMV(regtop, &mut ac.valrk, &mut reg, incr, true);
-                }
-                _ => {
-                    ac.valrk = idx;
-                    reg += incr;
+        let b = if islastvargs { 0 } else { argc + 1 };
+        self.code.add_ABC(OP_CALL, funcreg as i32, b as i32, expr_ctx.opt + 2, start_line(expr));
+        self.proto.debug_calls.push(DebugCall::new(name, self.code.last_pc()));
+
+        if expr_ctx.opt == 2 && expr_ctx.typ == ExprContextType::Local && funcreg != expr_ctx.reg {
+            self.code.add_ABC(OP_MOVE, expr_ctx.reg as i32, funcreg as i32, 0, start_line(expr));
+            return 1;
+        }
+
+        if self.reg_top() > (funcreg + 2 + expr_ctx.opt as usize) || expr_ctx.opt < -1 {
+            return 0;
+        }
+
+        (expr_ctx.opt + 1) as usize
+    }
+
+    fn compile_binary_arith_expr(&mut self, mut reg: usize,
+                                 opr: BinaryOpr, lhs: &ExprNode, rhs: &ExprNode,
+                                 expr_ctx: &ExprContext, line: u32) {
+        let a = expr_ctx.savereg(reg);
+        let mut b = reg;
+        self.compile_expr_with_KMV_propagation(lhs, &mut reg, &mut b);
+        let mut c = reg;
+        self.compile_expr_with_MV_propagation(rhs, &mut reg, &mut c);
+
+        let opcode = match opr {
+            BinaryOpr::Add => OP_ADD,
+            BinaryOpr::Sub => OP_SUB,
+            BinaryOpr::Mul => OP_MUL,
+            BinaryOpr::Div => OP_DIV,
+            BinaryOpr::Mod => OP_MOD,
+            BinaryOpr::Pow => OP_POW,
+            _ => unreachable!()
+        };
+        self.code.add_ABC(opcode, a as i32, b as i32, c as i32, line);
+    }
+
+    fn compile_binary_rel_expr_aux(&mut self, mut reg: usize,
+                                   opr: BinaryOpr, lhs: &ExprNode, rhs: &ExprNode,
+                                   flip: i32, jumplabel: i32, line: u32) {
+        let mut b = reg;
+        self.compile_expr_with_KMV_propagation(lhs, &mut reg, &mut b);
+        let mut c = reg;
+        self.compile_expr_with_MV_propagation(rhs, &mut reg, &mut c);
+
+        let inst = match opr {
+            BinaryOpr::Eq => ABC(OP_EQ, 0 ^ flip, b as i32, c as i32),
+            BinaryOpr::NE => ABC(OP_EQ, 1 ^ flip, b as i32, c as i32),
+            BinaryOpr::LT => ABC(OP_LT, 0 ^ flip, b as i32, c as i32),
+            BinaryOpr::GT => ABC(OP_LT, 0 ^ flip, c as i32, b as i32),
+            BinaryOpr::LE => ABC(OP_LE, 0 ^ flip, b as i32, c as i32),
+            BinaryOpr::GE => ABC(OP_LE, 0 ^ flip, c as i32, b as i32),
+            _ => unreachable!()
+        };
+        self.code.add(inst, line);
+        self.code.add_ASBx(OP_JMP, 0, jumplabel, line);
+    }
+
+    fn compile_binary_rel_expr(&mut self, mut reg: usize,
+                               opr: BinaryOpr, lhs: &ExprNode, rhs: &ExprNode,
+                               expr_ctx: &ExprContext, line: u32) {
+        let a = expr_ctx.savereg(reg);
+        let jumplabel = self.new_label();
+        self.compile_binary_rel_expr_aux(reg, opr, lhs, rhs, 1, jumplabel, line);
+        self.code.add_ABC(OP_LOADBOOL, a as i32, 0, 1, line);
+        let lastpc = self.code.last_pc();
+        self.set_label_pc(jumplabel, lastpc);
+        self.code.add_ABC(OP_LOADBOOL, a as i32, 1, 0, line);
+    }
+
+    fn compile_binary_log_expr_aux(&mut self, mut reg: usize,
+                                   expr: &ExprNode, expr_ctx: &ExprContext,
+                                   thenlabel: i32, elselabel: i32, hasnextcond: bool, lb: &mut Lblabels) {
+        let mut flip = 0;
+        let mut jumplabel = elselabel;
+        if hasnextcond {
+            flip - 1;
+            jumplabel = thenlabel;
+        }
+
+        match expr.inner() {
+            &Expr::False => {
+                if elselabel == lb.e {
+                    self.code.add_ASBx(OP_JMP, 0, lb.f, start_line(expr));
+                    lb.b = true;
+                } else {
+                    self.code.add_ASBx(OP_JMP, 0, elselabel, start_line(expr));
                 }
             }
-        } else {
-            ac.nmove = incr != 0;
-            reg += incr;
+            &Expr::True => {
+                if elselabel == lb.e {
+                    self.code.add_ASBx(OP_JMP, 0, lb.t, start_line(expr));
+                    lb.b = true;
+                } else {
+                    self.code.add_ASBx(OP_JMP, 0, thenlabel, start_line(expr));
+                }
+            }
+            &Expr::Nil => {
+                if elselabel == lb.e {
+                    self.compile_expr(reg, expr, expr_ctx);
+                    self.code.add_ASBx(OP_JMP, 0, lb.e, start_line(expr));
+                } else {
+                    self.code.add_ASBx(OP_JMP, 0, elselabel, start_line(expr));
+                }
+            }
+            &Expr::String(_) | &Expr::Number(_) => {
+                if thenlabel == lb.e {
+                    self.compile_expr(reg, expr, expr_ctx);
+                    self.code.add_ASBx(OP_JMP, 0, lb.e, start_line(expr));
+                } else {
+                    self.code.add_ASBx(OP_JMP, 0, thenlabel, start_line(expr));
+                }
+            }
+            &Expr::BinaryOp(BinaryOpr::And, ref lhs, ref rhs) => {
+                let nextcondlabel = self.new_label();
+                self.compile_binary_log_expr_aux(reg, lhs, expr_ctx, nextcondlabel, elselabel, false, lb);
+                let lastpc = self.code.last_pc();
+                self.set_label_pc(nextcondlabel, lastpc);
+                self.compile_binary_log_expr_aux(reg, rhs, expr_ctx, thenlabel, elselabel, hasnextcond, lb);
+            }
+            &Expr::BinaryOp(BinaryOpr::Or, ref lhs, ref rhs) => {
+                let nextcondlabel = self.new_label();
+                self.compile_binary_log_expr_aux(reg, lhs, expr_ctx, thenlabel, nextcondlabel, true, lb);
+                let lastpc = self.code.last_pc();
+                self.set_label_pc(nextcondlabel, lastpc);
+                self.compile_binary_log_expr_aux(reg, rhs, expr_ctx, thenlabel, elselabel, hasnextcond, lb);
+            }
+            Expr::BinaryOp(ref opr, ref lhs, ref rhs)
+            if opr == &BinaryOpr::Eq ||
+                opr == &BinaryOpr::LT ||
+                opr == &BinaryOpr::LE ||
+                opr == &BinaryOpr::NE ||
+                opr == &BinaryOpr::GT ||
+                opr == &BinaryOpr::GE => {
+                if thenlabel == elselabel {
+                    flip ^= 1;
+                    jumplabel = lb.t;
+                    lb.b = true;
+                } else if thenlabel == lb.e {
+                    jumplabel = lb.t;
+                    lb.b = true;
+                } else if elselabel == lb.e {
+                    jumplabel = lb.f;
+                    lb.b = true;
+                }
+                self.compile_binary_rel_expr_aux(reg, *opr, lhs, rhs, flip, jumplabel, start_line(expr));
+            }
+            _ => {
+                if !hasnextcond && thenlabel == elselabel {
+                    reg += self.compile_expr(reg, expr, expr_ctx);
+                } else {
+                    let a = reg;
+                    let sreg = expr_ctx.savereg(a);
+                    reg += self.compile_expr(reg, expr, &ExprContext::with_opt(0));
+                    if sreg == a {
+                        self.code.add_ABC(OP_TEST, a as i32, 0, 0 ^ flip, start_line(expr));
+                    } else {
+                        self.code.add_ABC(OP_TESTSET, sreg as i32, a as i32, 0 ^ flip, start_line(expr));
+                    }
+                }
+                self.code.add_ASBx(OP_JMP, 0, jumplabel, start_line(expr))
+            }
         }
-        namesassigned += 1;
     }
 
-    let rightreg = reg - 1;
-    for i in namesassigned..lenexprs {
-        let opt = if i != lenexprs - 1 { 0 } else { -1 };
-        reg += compile_expr(ctx, reg, &rhs[i], &ExprContext::with_opt(opt));
-    }
-    (rightreg, acs)
-}
+    fn compile_binary_log_expr(&mut self, mut reg: usize,
+                               opr: BinaryOpr, lhs: &ExprNode, rhs: &ExprNode,
+                               expr_ctx: &ExprContext, line: u32) {
+        let a = expr_ctx.savereg(reg);
+        let endlabel = self.new_label();
+        let mut lb = Lblabels::new(self.new_label(), self.new_label(), endlabel, false);
+        let nextcondlabel = self.new_label();
+        match opr {
+            BinaryOpr::And => {
+                self.compile_binary_log_expr_aux(reg, lhs, expr_ctx, nextcondlabel, endlabel, false, &mut lb);
+                let lastpc = self.code.last_pc();
+                self.set_label_pc(nextcondlabel, lastpc);
+                self.compile_binary_log_expr_aux(reg, rhs, expr_ctx, endlabel, endlabel, false, &mut lb);
+            }
+            BinaryOpr::Or => {
+                self.compile_binary_log_expr_aux(reg, lhs, expr_ctx, endlabel, nextcondlabel, true, &mut lb);
+                let lastpc = self.code.last_pc();
+                self.set_label_pc(nextcondlabel, lastpc);
+                self.compile_binary_log_expr_aux(reg, rhs, expr_ctx, endlabel, endlabel, false, &mut lb);
+            }
+            _ => unreachable!()
+        }
 
-fn compile_assign_stmt(ctx: &mut FunctionContext, lhs: &Vec<ExprNode>, rhs: &Vec<ExprNode>) {
-    let lhslen = lhs.len();
-    let (reg, acs) = compile_assign_stmt_left(ctx, lhs);
-    let (mut reg, acs) = compile_assign_stmt_right(ctx, reg, lhs, rhs, acs);
-    for j in 0..lhslen {
-        let i = lhslen - 1 - j;
-        let expr = &lhs[i];
-        match acs[i].expr_ctx.typ {
-            ExprContextType::Local => {
-                if acs[i].nmove {
-                    if let Expr::Ident(ref s) = expr.inner() {
-                        let index = match ctx.find_local_var(s) {
+        if lb.b {
+            let lastpc = self.code.last_pc();
+            self.set_label_pc(lb.f, lastpc);
+            self.code.add_ABC(OP_LOADBOOL, a as i32, 0, 1, line);
+            let lastpc = self.code.last_pc();
+            self.set_label_pc(lb.t, lastpc);
+            self.code.add_ABC(OP_LOADBOOL, a as i32, 1, 0, line);
+        }
+
+        let lastinst = self.code.last();
+        if get_opcode(lastinst) == OP_JMP && get_argsbx(lastinst) == endlabel {
+            self.code.pop();
+        }
+        let lastpc = self.code.last_pc();
+        self.set_label_pc(endlabel, lastpc);
+    }
+
+    fn compile_binaryop_expr(&mut self, mut reg: usize, expr: &ExprNode, expr_ctx: &ExprContext) {
+        match expr.inner() {
+            Expr::BinaryOp(ref opr, ref lhs, ref rhs)
+            if opr == &BinaryOpr::Add ||
+                opr == &BinaryOpr::Sub ||
+                opr == &BinaryOpr::Mul ||
+                opr == &BinaryOpr::Div ||
+                opr == &BinaryOpr::Mod ||
+                opr == &BinaryOpr::Pow => {
+                self.compile_binary_arith_expr(reg, *opr, lhs, rhs, expr_ctx, start_line(expr));
+            }
+            Expr::BinaryOp(BinaryOpr::Concat, ref lhs, ref rhs) => {
+                let mut crange = 1;
+                let mut current = rhs;
+                loop {
+                    match current.inner() {
+                        Expr::BinaryOp(BinaryOpr::Concat, ref sublhs, ref subrhs) => {
+                            crange += 1;
+                            current = subrhs;
+                        }
+                        _ => break
+                    }
+                }
+                let a = expr_ctx.savereg(reg);
+                let basereg = reg;
+                reg += self.compile_expr(reg, lhs, &ExprContext::with_opt(0));
+                reg += self.compile_expr(reg, rhs, &ExprContext::with_opt(0));
+                let mut pc = self.code.last_pc();
+                while pc != 0 && get_opcode(self.code.at(pc)) == OP_CONCAT {
+                    &mut self.code.pop();
+                    pc -= 1;
+                }
+                &mut self.code.add_ABC(OP_CONCAT, a as i32, basereg as i32, (basereg as i32 + crange), start_line(expr));
+            }
+            Expr::BinaryOp(ref opr, ref lhs, ref rhs)
+            if opr == &BinaryOpr::Eq ||
+                opr == &BinaryOpr::LT ||
+                opr == &BinaryOpr::LE ||
+                opr == &BinaryOpr::NE ||
+                opr == &BinaryOpr::GT ||
+                opr == &BinaryOpr::GE => {
+                self.compile_binary_rel_expr(reg, *opr, lhs, rhs, expr_ctx, start_line(expr));
+            }
+            Expr::BinaryOp(opr, ref lhs, ref rhs) if opr == &BinaryOpr::And || opr == &BinaryOpr::Or => {
+                self.compile_binary_log_expr(reg, *opr, lhs, rhs, expr_ctx, start_line(expr));
+            }
+            _ => unreachable!()
+        }
+    }
+
+    fn compile_unaryop_expr(&mut self, mut reg: usize, expr: &ExprNode, expr_ctx: &ExprContext) {
+        let (opcode, operand) = match expr.inner() {
+            Expr::UnaryOp(UnaryOpr::Not, ref subexpr) => {
+                match subexpr.inner() {
+                    &Expr::True => {
+                        self.code.add_ABC(OP_LOADBOOL, expr_ctx.savereg(reg) as i32, 0, 0, start_line(expr));
+                        return;
+                    }
+                    &Expr::False | &Expr::Nil => {
+                        self.code.add_ABC(OP_LOADBOOL, expr_ctx.savereg(reg) as i32, 1, 0, start_line(expr));
+                        return;
+                    }
+                    _ => (OP_NOT, subexpr)
+                }
+            }
+            Expr::UnaryOp(UnaryOpr::Length, ref subexpr) => (OP_LEN, subexpr),
+            Expr::UnaryOp(UnaryOpr::Minus, ref subexpr) => (OP_UNM, subexpr),
+            _ => unreachable!()
+        };
+
+        let a = expr_ctx.savereg(reg);
+        let mut b = reg;
+        self.compile_expr_with_MV_propagation(operand, &mut reg, &mut b);
+        self.code.add_ABC(opcode, a as i32, b as i32, 0, start_line(expr));
+    }
+
+    fn compile_expr(&mut self, mut reg: usize, expr: &ExprNode, expr_ctx: &ExprContext) -> usize {
+        let sreg = expr_ctx.savereg(reg);
+        let mut sused: usize = if sreg < reg { 0 } else { 1 };
+        let svreg = sreg as i32;
+
+        // TODO: const value
+        match expr.inner() {
+            &Expr::True => self.code.add_ABC(OP_LOADBOOL, 1, 0, 0, start_line(expr)),
+            &Expr::False => self.code.add_ABC(OP_LOADBOOL, 0, 0, 0, start_line(expr)),
+            &Expr::Nil => self.code.add_ABC(OP_LOADNIL, svreg, svreg, 0, start_line(expr)),
+            &Expr::Number(f) => {
+                let num = self.const_index(Rc::new(Value::Number(f)));
+                self.code.add_ABx(OP_LOADBOOL, svreg, num as i32, start_line(expr))
+            }
+            &Expr::String(ref s) => {
+                let index = self.const_index(Rc::new(Value::String(s.clone())));
+                self.code.add_ABx(OP_LOADK, svreg, index as i32, start_line(expr))
+            }
+            &Expr::Dots => {
+                if self.proto.is_vararg == 0 {
+                    panic!("cannot use '...' outside a vararg function")
+                }
+                self.proto.is_vararg &= !VARARG_NEED;
+                self.code.add_ABC(OP_VARARG, svreg, expr_ctx.opt + 2, 0, start_line(expr));
+                sused = if self.reg_top() > (expr_ctx.opt + 2) as usize || expr_ctx.opt < -1 {
+                    0
+                } else {
+                    (svreg + 1 + expr_ctx.opt) as usize - reg
+                }
+            }
+            &Expr::Ident(ref s) => {
+                let identtype = self.get_ident_reftype(s);
+                match identtype {
+                    ExprContextType::Global => {
+                        let index = self.const_index(Rc::new(Value::String(s.clone())));
+                        self.code.add_ABx(OP_LOADK, svreg, index as i32, start_line(expr))
+                    }
+                    ExprContextType::Upval => {
+                        let index = self.upval.register_unique(s.clone());
+                        self.code.add_ABC(OP_GETUPVAL, svreg, index as i32, 0, start_line(expr));
+                    }
+                    ExprContextType::Local => {
+                        let index = match self.find_local_var(s) {
                             Some(i) => i as i32,
                             None => -1
                         };
-                        ctx.code.add_ABC(OP_MOVE, index, reg as i32, 0, start_line(expr));
+                        self.code.add_ABC(OP_MOVE, svreg, index, 0, start_line(expr));
+                    }
+                    _ => unreachable!()
+                }
+            }
+            &Expr::AttrGet(ref obj, ref key) => {
+                let a = svreg;
+                let mut b = reg.clone();
+                self.compile_expr_with_MV_propagation(obj, &mut reg, &mut b);
+                let mut c = reg.clone();
+                self.compile_expr_with_KMV_propagation(key, &mut reg, &mut c);
+                let opcode = if let &Expr::String(_) = key.inner() { OP_GETTABLEKS } else { OP_GETTABLE };
+                self.code.add_ABC(opcode, a, b as i32, c as i32, start_line(expr));
+            }
+            &Expr::Table(_) => self.compile_table_expr(reg, expr, expr_ctx),
+            &Expr::FuncCall(_) | &Expr::MethodCall(_) => sused = self.compile_fncall_expr(reg, expr, expr_ctx),
+            &Expr::BinaryOp(_, _, _) => self.compile_binaryop_expr(reg, expr, expr_ctx),
+            &Expr::UnaryOp(_, _) => self.compile_unaryop_expr(reg, expr, expr_ctx),
+            &Expr::Function(ref params, ref stmts) => {
+                let (proto, upvals) = {
+                    let mut subcompiler = Compiler::new(self.proto.source.clone(), Some(self));
+                    subcompiler.compile_func_expr(params, stmts, expr_ctx, start_line(expr), end_line(expr));
+                    let mut upval = VarRegistry::new(0);
+                    swap(&mut subcompiler.upval, &mut upval);
+                    (subcompiler.proto, upval)
+                };
+
+                let protono = self.proto.prototypes.len();
+                self.proto.prototypes.push(proto);
+                self.code.add_ABx(OP_CLOSURE, svreg, protono as i32, start_line(expr));
+                for upv in &upvals.names {
+                    let (op, mut index) = match self.block.find_var_block(upv) {
+                        Some(blk) => {
+                            blk.ref_upval = true;
+                            (OP_MOVE, blk.locals.find(upv).unwrap() as i32)
+                        }
+                        None => {
+                            match self.upval.find(upv) {
+                                Some(i) => (OP_GETUPVAL, i as i32),
+                                None => (OP_GETUPVAL, -1)
+                            }
+                        }
+                    };
+                    if index == -1 {
+                        index = self.upval.register_unique(upv.clone()) as i32;
+                    }
+                    self.code.add_ABC(op, 0, index, 0, start_line(expr));
+                }
+            }
+        };
+        sused
+    }
+
+    fn compile_expr_with_propagation(&mut self, expr: &ExprNode, reg: &mut usize, save: &mut usize, loadk: bool) {
+        let incr = self.compile_expr(*reg, expr, &ExprContext::with_opt(0));
+        match expr.inner() {
+            Expr::BinaryOp(BinaryOpr::And, _, _) | Expr::BinaryOp(BinaryOpr::Or, _, _) => {
+                *save = *reg;
+                *reg += incr;
+            }
+            _ => {
+                let top = self.reg_top();
+                self.code.propagate_KMV(top, save, reg, incr, loadk)
+            }
+        }
+    }
+
+    fn compile_expr_with_KMV_propagation(&mut self, expr: &ExprNode, reg: &mut usize, save: &mut usize) {
+        self.compile_expr_with_propagation(expr, reg, save, true)
+    }
+
+    fn compile_expr_with_MV_propagation(&mut self, expr: &ExprNode, reg: &mut usize, save: &mut usize) {
+        self.compile_expr_with_propagation(expr, reg, save, false)
+    }
+
+    fn compile_assign_stmt_left(&mut self, lhs: &Vec<ExprNode>) -> (usize, Vec<AssignContext>) {
+        let mut reg = self.reg_top();
+        let len = lhs.len();
+        let mut acs = Vec::<AssignContext>::with_capacity(len);
+        for (i, expr) in lhs.iter().enumerate() {
+            let islast = i == len - 1;
+            match expr.inner() {
+                &Expr::Ident(ref s) => {
+                    let identtype = self.get_ident_reftype(s);
+                    let mut expr_ctx = ExprContext::new(identtype, REG_UNDEFINED, 0);
+                    match identtype {
+                        ExprContextType::Global => {
+                            self.const_index(Rc::new(Value::String(s.clone())));
+                        }
+                        ExprContextType::Upval => {
+                            self.upval.register_unique(s.clone());
+                        }
+                        ExprContextType::Local => {
+                            if islast {
+                                // TODO: check
+                                expr_ctx.reg = self.find_local_var(s).unwrap();
+                            }
+                        }
+                        _ => unreachable!("invalid lhs identity type")
+                    };
+                    acs.push(AssignContext::new(expr_ctx, 0, 0, false, false))
+                }
+                &Expr::AttrGet(ref obj, ref key) => {
+                    let mut expr_ctx = ExprContext::new(ExprContextType::Table, REG_UNDEFINED, 0);
+                    self.compile_expr_with_KMV_propagation(obj, &mut reg, &mut expr_ctx.reg);
+                    reg += self.compile_expr(reg, key, &ExprContext::with_opt(0));
+                    let keyks = if let Expr::String(_) = key.inner() { true } else { false };
+                    let assi_ctx = AssignContext::new(expr_ctx, reg, 0, keyks, false);
+                    acs.push(assi_ctx);
+                }
+                _ => unreachable!("invalid left expression")
+            }
+        };
+
+        (reg, acs)
+    }
+
+    fn compile_assign_stmt_right(&mut self, mut reg: usize,
+                                 lhs: &Vec<ExprNode>,
+                                 rhs: &Vec<ExprNode>,
+                                 mut acs: Vec<AssignContext>) -> (usize, Vec<AssignContext>) {
+        let lennames = lhs.len();
+        let lenexprs = rhs.len();
+        let mut namesassigned = 0;
+        while namesassigned < lennames {
+            // multiple assign with vararg function
+            if rhs[namesassigned].inner().is_vararg() && (lenexprs - namesassigned - 1) <= 0 {
+                let opt = lennames - namesassigned - 1;
+                let regstart = reg;
+                let incr = self.compile_expr(reg, &rhs[namesassigned], &ExprContext::with_opt(opt as i32));
+                reg += incr;
+                for i in namesassigned..(namesassigned + incr) {
+                    acs[i].nmove = true;
+                    if acs[i].expr_ctx.typ == ExprContextType::Table {
+                        acs[i].valrk = regstart + (1 - namesassigned);
+                    }
+                }
+                namesassigned = lennames;
+                break;
+            }
+
+            // regular assignment
+            let mut ac = acs[namesassigned];
+            let mut nilexprs: Vec<ExprNode> = vec![];
+            let expr = if namesassigned >= lenexprs {
+                let mut expr = ExprNode::new(Expr::Nil);
+                expr.set_line(start_line(&lhs[namesassigned]));
+                expr.set_last_line(end_line(&lhs[namesassigned]));
+                nilexprs.push(expr);
+                &nilexprs[0]
+            } else {
+                &rhs[namesassigned]
+            };
+
+            let idx = reg;
+            let incr = self.compile_expr(reg, &expr, &ac.expr_ctx);
+            if ac.expr_ctx.typ == ExprContextType::Table {
+                match expr.inner() {
+                    Expr::BinaryOp(BinaryOpr::And, _, _) | Expr::BinaryOp(BinaryOpr::Or, _, _) => {
+                        let regtop = self.reg_top();
+                        self.code.propagate_KMV(regtop, &mut ac.valrk, &mut reg, incr, true);
+                    }
+                    _ => {
+                        ac.valrk = idx;
+                        reg += incr;
+                    }
+                }
+            } else {
+                ac.nmove = incr != 0;
+                reg += incr;
+            }
+            namesassigned += 1;
+        }
+
+        let rightreg = reg - 1;
+        for i in namesassigned..lenexprs {
+            let opt = if i != lenexprs - 1 { 0 } else { -1 };
+            reg += self.compile_expr(reg, &rhs[i], &ExprContext::with_opt(opt));
+        }
+        (rightreg, acs)
+    }
+
+    fn compile_assign_stmt(&mut self, lhs: &Vec<ExprNode>, rhs: &Vec<ExprNode>) {
+        let lhslen = lhs.len();
+        let (reg, acs) = self.compile_assign_stmt_left(lhs);
+        let (mut reg, acs) = self.compile_assign_stmt_right(reg, lhs, rhs, acs);
+        for j in 0..lhslen {
+            let i = lhslen - 1 - j;
+            let expr = &lhs[i];
+            match acs[i].expr_ctx.typ {
+                ExprContextType::Local => {
+                    if acs[i].nmove {
+                        if let Expr::Ident(ref s) = expr.inner() {
+                            let index = match self.find_local_var(s) {
+                                Some(i) => i as i32,
+                                None => -1
+                            };
+                            self.code.add_ABC(OP_MOVE, index, reg as i32, 0, start_line(expr));
+                            reg -= 1;
+                        } else {
+                            unreachable!()
+                        }
+                    }
+                }
+                ExprContextType::Global => {
+                    if let Expr::Ident(ref s) = expr.inner() {
+                        let index = self.const_index(Rc::new(Value::String(s.clone())));
+                        self.code.add_ABC(OP_MOVE, index as i32, reg as i32, 0, start_line(expr));
                         reg -= 1;
                     } else {
                         unreachable!()
                     }
                 }
-            }
-            ExprContextType::Global => {
-                if let Expr::Ident(ref s) = expr.inner() {
-                    let index = ctx.const_index(Rc::new(Value::String(s.clone())));
-                    ctx.code.add_ABC(OP_MOVE, index as i32, reg as i32, 0, start_line(expr));
-                    reg -= 1;
-                } else {
-                    unreachable!()
+                ExprContextType::Upval => {
+                    if let Expr::Ident(ref s) = expr.inner() {
+                        let index = self.upval.register_unique(s.clone());
+                        self.code.add_ABC(OP_MOVE, index as i32, reg as i32, 0, start_line(expr));
+                        reg -= 1;
+                    } else {
+                        unreachable!()
+                    }
                 }
-            }
-            ExprContextType::Upval => {
-                if let Expr::Ident(ref s) = expr.inner() {
-                    let index = ctx.upval.register_unique(s.clone());
-                    ctx.code.add_ABC(OP_MOVE, index as i32, reg as i32, 0, start_line(expr));
-                    reg -= 1;
-                } else {
-                    unreachable!()
+                ExprContextType::Table => {
+                    let opcode = if acs[i].keyks { OP_SETTABLEKS } else { OP_SETTABLE };
+                    self.code.add_ABC(opcode, acs[i].expr_ctx.reg as i32, acs[i].keyrk as i32, acs[i].valrk as i32, start_line(expr));
+                    if is_k(acs[i].valrk as i32) {
+                        reg -= 1;
+                    }
                 }
-            }
-            ExprContextType::Table => {
-                let opcode = if acs[i].keyks { OP_SETTABLEKS } else { OP_SETTABLE };
-                ctx.code.add_ABC(opcode, acs[i].expr_ctx.reg as i32, acs[i].keyrk as i32, acs[i].valrk as i32, start_line(expr));
-                if is_k(acs[i].valrk as i32) {
-                    reg -= 1;
-                }
-            }
-            _ => {}
-        }
-    }
-}
-
-fn compile_reg_assignment(ctx: &mut FunctionContext, names: &Vec<String>, exprs: &Vec<ExprNode>,
-                          mut reg: usize, nvars: usize, line: u32) {
-    let lennames = names.len();
-    let lenexprs = exprs.len();
-
-    let mut namesassigned = 0;
-    let mut expr_ctx = ExprContext::with_opt(0);
-    while namesassigned < lennames && namesassigned < lenexprs {
-        if exprs[namesassigned].inner().is_vararg() && (lenexprs - namesassigned - 1) <= 0 {
-            let opt = nvars - namesassigned;
-            expr_ctx.update(ExprContextType::Vararg, reg, (opt - 1) as i32);
-            compile_expr(ctx, reg, &exprs[namesassigned], &expr_ctx);
-            reg += opt;
-            namesassigned = lennames;
-        } else {
-            expr_ctx.update(ExprContextType::Local, reg, 0);
-            compile_expr(ctx, reg, &exprs[namesassigned], &expr_ctx);
-            reg += 1;
-            namesassigned += 1;
-        }
-    }
-
-    if lennames > namesassigned {
-        let left = lennames - namesassigned - 1;
-        ctx.code.add_ABC(OP_LOADNIL, reg as i32, (reg + left) as i32, 0, line);
-        reg += left;
-    }
-
-    for i in namesassigned..lenexprs {
-        let opt = if i != lenexprs - 1 { 0 } else { -1 };
-        expr_ctx.update(ExprContextType::None, reg, opt);
-        reg += compile_expr(ctx, reg, &exprs[i], &expr_ctx);
-    }
-}
-
-fn compile_local_assign_stmt(ctx: &mut FunctionContext, names: &Vec<String>, values: &Vec<ExprNode>, line: u32) {
-    let reg = ctx.reg_top();
-    if names.len() == 1 && values.len() == 1 {
-        if let Expr::Function(ref params, ref stmts) = values[0].inner() {
-            ctx.register_local_var(names[0].clone());
-            compile_reg_assignment(ctx, names, values, reg, names.len(), line);
-            return;
-        }
-    }
-
-    compile_reg_assignment(ctx, names, values, reg, names.len(), line);
-    for name in names {
-        ctx.register_local_var(name.clone());
-    }
-}
-
-fn compile_branch_condition(ctx: &mut FunctionContext, mut reg: usize, expr: &ExprNode,
-                            thenlabel: i32, elselabel: i32, hasnextcond: bool) {
-    let startline = start_line(expr);
-    let (flip, jumplabel) = if hasnextcond { (1, thenlabel) } else { (0, elselabel) };
-    match expr.inner() {
-        &Expr::False | &Expr::Nil => {
-            if !hasnextcond {
-                ctx.code.add_ASBx(OP_JMP, 0, elselabel, startline);
+                _ => {}
             }
         }
-        &Expr::True | &Expr::Number(_) | &Expr::String(_) => {
-            if !hasnextcond {
+    }
+
+    fn compile_reg_assignment(&mut self, names: &Vec<String>, exprs: &Vec<ExprNode>,
+                              mut reg: usize, nvars: usize, line: u32) {
+        let lennames = names.len();
+        let lenexprs = exprs.len();
+
+        let mut namesassigned = 0;
+        let mut expr_ctx = ExprContext::with_opt(0);
+        while namesassigned < lennames && namesassigned < lenexprs {
+            if exprs[namesassigned].inner().is_vararg() && (lenexprs - namesassigned - 1) <= 0 {
+                let opt = nvars - namesassigned;
+                expr_ctx.update(ExprContextType::Vararg, reg, (opt - 1) as i32);
+                self.compile_expr(reg, &exprs[namesassigned], &expr_ctx);
+                reg += opt;
+                namesassigned = lennames;
+            } else {
+                expr_ctx.update(ExprContextType::Local, reg, 0);
+                self.compile_expr(reg, &exprs[namesassigned], &expr_ctx);
+                reg += 1;
+                namesassigned += 1;
+            }
+        }
+
+        if lennames > namesassigned {
+            let left = lennames - namesassigned - 1;
+            self.code.add_ABC(OP_LOADNIL, reg as i32, (reg + left) as i32, 0, line);
+            reg += left;
+        }
+
+        for i in namesassigned..lenexprs {
+            let opt = if i != lenexprs - 1 { 0 } else { -1 };
+            expr_ctx.update(ExprContextType::None, reg, opt);
+            reg += self.compile_expr(reg, &exprs[i], &expr_ctx);
+        }
+    }
+
+    fn compile_local_assign_stmt(&mut self, names: &Vec<String>, values: &Vec<ExprNode>, line: u32) {
+        let reg = self.reg_top();
+        if names.len() == 1 && values.len() == 1 {
+            if let Expr::Function(ref params, ref stmts) = values[0].inner() {
+                self.register_local_var(names[0].clone());
+                self.compile_reg_assignment(names, values, reg, names.len(), line);
                 return;
             }
         }
-        &Expr::BinaryOp(BinaryOpr::And, ref lhs, ref rhs) => {
-            let nextcondlabel = ctx.new_lable();
-            compile_branch_condition(ctx, reg, lhs, nextcondlabel, elselabel, false);
-            let lastpc = ctx.code.last_pc();
-            ctx.set_label_pc(nextcondlabel, lastpc);
-            compile_branch_condition(ctx, reg, rhs, thenlabel, elselabel, hasnextcond);
-            return;
+
+        self.compile_reg_assignment(names, values, reg, names.len(), line);
+        for name in names {
+            self.register_local_var(name.clone());
         }
-        &Expr::BinaryOp(BinaryOpr::Or, ref lhs, ref rhs) => {
-            let nextcondlabel = ctx.new_lable();
-            compile_branch_condition(ctx, reg, lhs, thenlabel, nextcondlabel, true);
-            let lastpc = ctx.code.last_pc();
-            ctx.set_label_pc(nextcondlabel, lastpc);
-            compile_branch_condition(ctx, reg, rhs, thenlabel, elselabel, hasnextcond);
-            return;
-        }
-        &Expr::BinaryOp(ref opr, ref lhs, ref rhs)
-        if opr == &BinaryOpr::Eq ||
-            opr == &BinaryOpr::LT ||
-            opr == &BinaryOpr::LE ||
-            opr == &BinaryOpr::NE ||
-            opr == &BinaryOpr::GT ||
-            opr == &BinaryOpr::GE => {
-            compile_binary_rel_expr_aux(ctx, reg, *opr, lhs, rhs, flip, jumplabel, startline);
-            return;
-        }
-        _ => {}
     }
 
-    let mut a = reg;
-    compile_expr_with_MV_propagation(ctx, expr, &mut reg, &mut a);
-    ctx.code.add_ABC(OP_TEST, a as i32, 0, 0 ^ flip, startline);
-    ctx.code.add_ASBx(OP_JMP, 0, jumplabel, startline)
-}
-
-fn compile_while_stmt(ctx: &mut FunctionContext, cond: &ExprNode, stmts: &Vec<StmtNode>,
-                      star_line: u32, end_line: u32) {
-    let thenlabel = ctx.new_lable();
-    let elselabel = ctx.new_lable();
-    let condlabel = ctx.new_lable();
-
-    let lastpc = ctx.code.last_pc();
-    ctx.set_label_pc(condlabel, lastpc);
-    let regtop = ctx.reg_top();
-    compile_branch_condition(ctx, regtop, cond, thenlabel, elselabel, false);
-    let lastpc = ctx.code.last_pc();
-    ctx.set_label_pc(thenlabel, lastpc);
-    ctx.enter_block(elselabel as usize, (star_line, end_line));
-    compile_chunk(ctx, stmts);
-    ctx.close_upval();
-    ctx.code.add_ASBx(OP_JMP, 0, condlabel as i32, end_line);
-    ctx.leave_block();
-    let lastpc = ctx.code.last_pc();
-    ctx.set_label_pc(elselabel, lastpc);
-}
-
-fn compile_repeat_stmt(ctx: &mut FunctionContext, cond: &ExprNode, stmts: &Vec<StmtNode>,
-                       star_line: u32, end_line: u32) {
-    let initlabel = ctx.new_lable();
-    let thenlabel = ctx.new_lable();
-    let elselabel = ctx.new_lable();
-
-    let lastpc = ctx.code.last_pc();
-    ctx.set_label_pc(initlabel, lastpc);
-    ctx.set_label_pc(elselabel, lastpc);
-
-    ctx.enter_block(thenlabel as usize, (star_line, end_line));
-    compile_chunk(ctx, stmts);
-    let regtop = ctx.reg_top();
-    compile_branch_condition(ctx, regtop, cond, thenlabel, elselabel, false);
-
-    let lastpc = ctx.code.last_pc();
-    ctx.set_label_pc(thenlabel, lastpc);
-
-    match ctx.leave_block() {
-        Some(n) => {
-            let label = ctx.new_lable();
-            ctx.code.add_ASBx(OP_JMP, 0, label, end_line);
-            let lastpc = ctx.code.last_pc();
-            ctx.set_label_pc(elselabel, lastpc);
-            ctx.code.add_ABC(OP_CLOSE, n as i32, 0, 0, end_line);
-            ctx.code.add_ASBx(OP_JMP, 0, initlabel, end_line);
-            let lastpc = ctx.code.last_pc();
-            ctx.set_label_pc(label, lastpc);
-        }
-        None => {}
-    }
-}
-
-fn compile_if_stmt(ctx: &mut FunctionContext, ifelsethen: &IfThenElse, startline: u32, endline: u32) {
-    let thenlabel = ctx.new_lable();
-    let elselabel = ctx.new_lable();
-    let endlabel = ctx.new_lable();
-
-    let regtop = ctx.reg_top();
-    compile_branch_condition(ctx, regtop, &ifelsethen.condition, thenlabel, elselabel, false);
-    let lastpc = ctx.code.last_pc();
-    ctx.set_label_pc(thenlabel, lastpc);
-    compile_block(ctx, &ifelsethen.then);
-    if ifelsethen.els.len() > 0 {
-        ctx.code.add_ASBx(OP_JMP, 0, endlabel, startline)
-    }
-
-    let lastpc = ctx.code.last_pc();
-    ctx.set_label_pc(elselabel, lastpc);
-    if ifelsethen.els.len() > 0 {
-        compile_block(ctx, &ifelsethen.els);
-        let lastpc = ctx.code.last_pc();
-        ctx.set_label_pc(endlabel, lastpc);
-    }
-}
-
-fn compile_nfor_stmt(ctx: &mut FunctionContext, nfor: &NumberFor, startline: u32, endline: u32) {
-    let endlabel = ctx.new_lable();
-    let mut expr_ctx = ExprContext::with_opt(0);
-
-    ctx.enter_block(endlabel as usize, (startline, endline));
-    let regtop = ctx.reg_top();
-    let rindex = ctx.register_local_var(String::from("(for index)"));
-    expr_ctx.update(ExprContextType::Local, rindex, 0);
-    compile_expr(ctx, regtop, &nfor.init, &expr_ctx);
-
-    let regtop = ctx.reg_top();
-    let rlimit = ctx.register_local_var(String::from("(for limit)"));
-    expr_ctx.update(ExprContextType::Local, rlimit, 0);
-    compile_expr(ctx, regtop, &nfor.limit, &expr_ctx);
-
-    let regtop = ctx.reg_top();
-    let rstep = ctx.register_local_var(String::from("(for step)"));
-    expr_ctx.update(ExprContextType::Local, rstep, 0);
-    compile_expr(ctx, regtop, &nfor.step, &expr_ctx);
-
-    ctx.code.add_ASBx(OP_FORPREP, rindex as i32, 0, startline);
-    ctx.register_local_var(nfor.name.clone());
-
-    let bodypc = ctx.code.last_pc();
-    compile_block(ctx, &nfor.stmts);
-    ctx.leave_block();
-    let flpc = ctx.code.last_pc();
-    ctx.code.add_ASBx(OP_FORLOOP, rindex as i32, (bodypc - (flpc + 1)) as i32, startline);
-
-    let lastpc = ctx.code.last_pc();
-    ctx.set_label_pc(endlabel, lastpc);
-    ctx.code.set_argsbx(bodypc, (flpc - bodypc) as i32);
-}
-
-fn compile_gfor_stmt(ctx: &mut FunctionContext, gfor: &GenericFor, startline: u32, endline: u32) {
-    let endlabel = ctx.new_lable();
-    let bodylable = ctx.new_lable();
-    let fllabel = ctx.new_lable();
-
-    let nnames = gfor.names.len();
-    ctx.enter_block(endlabel as usize, (startline, endline));
-    let rgen = ctx.register_local_var(String::from("(for generator)"));
-    ctx.register_local_var(String::from("(for state)"));
-    ctx.register_local_var(String::from("(for control)"));
-
-    let regtop = ctx.reg_top();
-    compile_reg_assignment(ctx, &gfor.names, &gfor.exprs, regtop - 3, 3, startline);
-
-    ctx.code.add_ASBx(OP_JMP, 0, fllabel, startline);
-    for name in &gfor.names {
-        ctx.register_local_var(name.clone());
-    }
-
-    let lastpc = ctx.code.last_pc();
-    ctx.set_label_pc(bodylable, lastpc);
-    compile_chunk(ctx, &gfor.stmts);
-    ctx.leave_block();
-
-    let lastpc = ctx.code.last_pc();
-    ctx.set_label_pc(fllabel, lastpc);
-    ctx.code.add_ABC(OP_TFORLOOP, rgen as i32, 0, nnames as i32, startline);
-    ctx.code.add_ASBx(OP_JMP, 0, bodylable as i32, startline);
-
-    let lastpc = ctx.code.last_pc();
-    ctx.set_label_pc(endlabel, lastpc);
-}
-
-fn compile_return_stmt(ctx: &mut FunctionContext, exprs: &Vec<ExprNode>, startline: u32, endline: u32) {
-    let lenexprs = exprs.len();
-    let mut reg = ctx.reg_top();
-    let a = reg;
-    let mut lastisvararg = false;
-
-    if lenexprs == 1 {
-        match exprs[0].inner() {
-            Expr::Ident(ref s) => {
-                if let Some(index) = ctx.find_local_var(s) {
-                    ctx.code.add_ABC(OP_RETURN, index as i32, 2, 0, startline);
+    fn compile_branch_condition(&mut self, mut reg: usize, expr: &ExprNode,
+                                thenlabel: i32, elselabel: i32, hasnextcond: bool) {
+        let startline = start_line(expr);
+        let (flip, jumplabel) = if hasnextcond { (1, thenlabel) } else { (0, elselabel) };
+        match expr.inner() {
+            &Expr::False | &Expr::Nil => {
+                if !hasnextcond {
+                    self.code.add_ASBx(OP_JMP, 0, elselabel, startline);
+                }
+            }
+            &Expr::True | &Expr::Number(_) | &Expr::String(_) => {
+                if !hasnextcond {
                     return;
                 }
             }
-            Expr::FuncCall(ref expr) => {
-                reg += compile_expr(ctx, reg, &exprs[0], &ExprContext::with_opt(-2));
-                let lastpc = ctx.code.last_pc();
-                ctx.code.set_opcode(lastpc, OP_TAILCALL);
-                ctx.code.add_ABC(OP_RETURN, a as i32, 0, 0, startline);
+            &Expr::BinaryOp(BinaryOpr::And, ref lhs, ref rhs) => {
+                let nextcondlabel = self.new_label();
+                self.compile_branch_condition(reg, lhs, nextcondlabel, elselabel, false);
+                let lastpc = self.code.last_pc();
+                self.set_label_pc(nextcondlabel, lastpc);
+                self.compile_branch_condition(reg, rhs, thenlabel, elselabel, hasnextcond);
+                return;
+            }
+            &Expr::BinaryOp(BinaryOpr::Or, ref lhs, ref rhs) => {
+                let nextcondlabel = self.new_label();
+                self.compile_branch_condition(reg, lhs, thenlabel, nextcondlabel, true);
+                let lastpc = self.code.last_pc();
+                self.set_label_pc(nextcondlabel, lastpc);
+                self.compile_branch_condition(reg, rhs, thenlabel, elselabel, hasnextcond);
+                return;
+            }
+            &Expr::BinaryOp(ref opr, ref lhs, ref rhs)
+            if opr == &BinaryOpr::Eq ||
+                opr == &BinaryOpr::LT ||
+                opr == &BinaryOpr::LE ||
+                opr == &BinaryOpr::NE ||
+                opr == &BinaryOpr::GT ||
+                opr == &BinaryOpr::GE => {
+                self.compile_binary_rel_expr_aux(reg, *opr, lhs, rhs, flip, jumplabel, startline);
                 return;
             }
             _ => {}
         }
+
+        let mut a = reg;
+        self.compile_expr_with_MV_propagation(expr, &mut reg, &mut a);
+        self.code.add_ABC(OP_TEST, a as i32, 0, 0 ^ flip, startline);
+        self.code.add_ASBx(OP_JMP, 0, jumplabel, startline)
     }
 
-    for (i, expr) in exprs.iter().enumerate() {
-        if i == lenexprs - 1 && expr.inner().is_vararg() {
-            compile_expr(ctx, reg, expr, &ExprContext::with_opt(-2));
-            lastisvararg = true;
-        } else {
-            reg += compile_expr(ctx, reg, expr, &ExprContext::with_opt(0))
+    fn compile_while_stmt(&mut self, cond: &ExprNode, stmts: &Vec<StmtNode>,
+                          star_line: u32, end_line: u32) {
+        let thenlabel = self.new_label();
+        let elselabel = self.new_label();
+        let condlabel = self.new_label();
+
+        let lastpc = self.code.last_pc();
+        self.set_label_pc(condlabel, lastpc);
+        let regtop = self.reg_top();
+        self.compile_branch_condition(regtop, cond, thenlabel, elselabel, false);
+        let lastpc = self.code.last_pc();
+        self.set_label_pc(thenlabel, lastpc);
+        self.enter_block(elselabel as usize, (star_line, end_line));
+        self.compile_chunk(stmts);
+        self.close_upval();
+        self.code.add_ASBx(OP_JMP, 0, condlabel as i32, end_line);
+        self.leave_block();
+        let lastpc = self.code.last_pc();
+        self.set_label_pc(elselabel, lastpc);
+    }
+
+    fn compile_repeat_stmt(&mut self, cond: &ExprNode, stmts: &Vec<StmtNode>,
+                           star_line: u32, end_line: u32) {
+        let initlabel = self.new_label();
+        let thenlabel = self.new_label();
+        let elselabel = self.new_label();
+
+        let lastpc = self.code.last_pc();
+        self.set_label_pc(initlabel, lastpc);
+        self.set_label_pc(elselabel, lastpc);
+
+        self.enter_block(thenlabel as usize, (star_line, end_line));
+        self.compile_chunk(stmts);
+        let regtop = self.reg_top();
+        self.compile_branch_condition(regtop, cond, thenlabel, elselabel, false);
+
+        let lastpc = self.code.last_pc();
+        self.set_label_pc(thenlabel, lastpc);
+
+        match self.leave_block() {
+            Some(n) => {
+                let label = self.new_label();
+                self.code.add_ASBx(OP_JMP, 0, label, end_line);
+                let lastpc = self.code.last_pc();
+                self.set_label_pc(elselabel, lastpc);
+                self.code.add_ABC(OP_CLOSE, n as i32, 0, 0, end_line);
+                self.code.add_ASBx(OP_JMP, 0, initlabel, end_line);
+                let lastpc = self.code.last_pc();
+                self.set_label_pc(label, lastpc);
+            }
+            None => {}
         }
     }
 
-    let count = if lastisvararg { 0 } else { reg - a + 1 };
-    ctx.code.add_ABC(OP_RETURN, a as i32, count as i32, 0, startline);
-}
+    fn compile_if_stmt(&mut self, ifelsethen: &IfThenElse, startline: u32, endline: u32) {
+        let thenlabel = self.new_label();
+        let elselabel = self.new_label();
+        let endlabel = self.new_label();
 
-fn compile_break_stmt(ctx: &mut FunctionContext, startline: u32) {
-    let mut blk = &ctx.block;
-    loop {
-        let label = blk.break_label;
-        if label != LABEL_NO_JUMP {
-            if blk.ref_upval {
-                match blk.parent {
-                    Some(ref parent) => {
-                        ctx.code.add_ABC(OP_CLOSE, parent.locals.last_index() as i32, 0, 0, startline);
+        let regtop = self.reg_top();
+        self.compile_branch_condition(regtop, &ifelsethen.condition, thenlabel, elselabel, false);
+        let lastpc = self.code.last_pc();
+        self.set_label_pc(thenlabel, lastpc);
+        self.compile_block(&ifelsethen.then);
+        if ifelsethen.els.len() > 0 {
+            self.code.add_ASBx(OP_JMP, 0, endlabel, startline)
+        }
+
+        let lastpc = self.code.last_pc();
+        self.set_label_pc(elselabel, lastpc);
+        if ifelsethen.els.len() > 0 {
+            self.compile_block(&ifelsethen.els);
+            let lastpc = self.code.last_pc();
+            self.set_label_pc(endlabel, lastpc);
+        }
+    }
+
+    fn compile_nfor_stmt(&mut self, nfor: &NumberFor, startline: u32, endline: u32) {
+        let endlabel = self.new_label();
+        let mut expr_ctx = ExprContext::with_opt(0);
+
+        self.enter_block(endlabel as usize, (startline, endline));
+        let regtop = self.reg_top();
+        let rindex = self.register_local_var(String::from("(for index)"));
+        expr_ctx.update(ExprContextType::Local, rindex, 0);
+        self.compile_expr(regtop, &nfor.init, &expr_ctx);
+
+        let regtop = self.reg_top();
+        let rlimit = self.register_local_var(String::from("(for limit)"));
+        expr_ctx.update(ExprContextType::Local, rlimit, 0);
+        self.compile_expr(regtop, &nfor.limit, &expr_ctx);
+
+        let regtop = self.reg_top();
+        let rstep = self.register_local_var(String::from("(for step)"));
+        expr_ctx.update(ExprContextType::Local, rstep, 0);
+        self.compile_expr(regtop, &nfor.step, &expr_ctx);
+
+        self.code.add_ASBx(OP_FORPREP, rindex as i32, 0, startline);
+        self.register_local_var(nfor.name.clone());
+
+        let bodypc = self.code.last_pc();
+        self.compile_block(&nfor.stmts);
+        self.leave_block();
+        let flpc = self.code.last_pc();
+        self.code.add_ASBx(OP_FORLOOP, rindex as i32, (bodypc - (flpc + 1)) as i32, startline);
+
+        let lastpc = self.code.last_pc();
+        self.set_label_pc(endlabel, lastpc);
+        self.code.set_argsbx(bodypc, (flpc - bodypc) as i32);
+    }
+
+    fn compile_gfor_stmt(&mut self, gfor: &GenericFor, startline: u32, endline: u32) {
+        let endlabel = self.new_label();
+        let bodylable = self.new_label();
+        let fllabel = self.new_label();
+
+        let nnames = gfor.names.len();
+        self.enter_block(endlabel as usize, (startline, endline));
+        let rgen = self.register_local_var(String::from("(for generator)"));
+        self.register_local_var(String::from("(for state)"));
+        self.register_local_var(String::from("(for control)"));
+
+        let regtop = self.reg_top();
+        self.compile_reg_assignment(&gfor.names, &gfor.exprs, regtop - 3, 3, startline);
+
+        self.code.add_ASBx(OP_JMP, 0, fllabel, startline);
+        for name in &gfor.names {
+            self.register_local_var(name.clone());
+        }
+
+        let lastpc = self.code.last_pc();
+        self.set_label_pc(bodylable, lastpc);
+        self.compile_chunk(&gfor.stmts);
+        self.leave_block();
+
+        let lastpc = self.code.last_pc();
+        self.set_label_pc(fllabel, lastpc);
+        self.code.add_ABC(OP_TFORLOOP, rgen as i32, 0, nnames as i32, startline);
+        self.code.add_ASBx(OP_JMP, 0, bodylable as i32, startline);
+
+        let lastpc = self.code.last_pc();
+        self.set_label_pc(endlabel, lastpc);
+    }
+
+    fn compile_return_stmt(&mut self, exprs: &Vec<ExprNode>, startline: u32, endline: u32) {
+        let lenexprs = exprs.len();
+        let mut reg = self.reg_top();
+        let a = reg;
+        let mut lastisvararg = false;
+
+        if lenexprs == 1 {
+            match exprs[0].inner() {
+                Expr::Ident(ref s) => {
+                    if let Some(index) = self.find_local_var(s) {
+                        self.code.add_ABC(OP_RETURN, index as i32, 2, 0, startline);
+                        return;
                     }
-                    None => unreachable!()
                 }
+                Expr::FuncCall(ref expr) => {
+                    reg += self.compile_expr(reg, &exprs[0], &ExprContext::with_opt(-2));
+                    let lastpc = self.code.last_pc();
+                    self.code.set_opcode(lastpc, OP_TAILCALL);
+                    self.code.add_ABC(OP_RETURN, a as i32, 0, 0, startline);
+                    return;
+                }
+                _ => {}
             }
-            ctx.code.add_ASBx(OP_JMP, 0, label as i32, startline);
-            return;
         }
-    }
-    panic!("no loop to break: {}", startline);
-}
 
-fn compile_stmt(ctx: &mut FunctionContext, stmt: &StmtNode) {
-    let (startline, endline) = (start_line(stmt), end_line(stmt));
-    match stmt.inner() {
-        &Stmt::Assign(ref lhs, ref rhs) => compile_assign_stmt(ctx, lhs, rhs),
-        &Stmt::LocalAssign(ref names, ref values) => compile_local_assign_stmt(ctx, names, values, startline),
-        &Stmt::FuncCall(ref expr) | &Stmt::MethodCall(ref expr) => {
-            let regtop = ctx.reg_top();
-            compile_fncall_expr(ctx, regtop, expr, &ExprContext::with_opt(-1));
+        for (i, expr) in exprs.iter().enumerate() {
+            if i == lenexprs - 1 && expr.inner().is_vararg() {
+                self.compile_expr(reg, expr, &ExprContext::with_opt(-2));
+                lastisvararg = true;
+            } else {
+                reg += self.compile_expr(reg, expr, &ExprContext::with_opt(0))
+            }
         }
-        &Stmt::DoBlock(ref stmts) => {
-            ctx.enter_block(LABEL_NO_JUMP, (startline, endline));
-            compile_chunk(ctx, stmts);
-            ctx.leave_block();
-        }
-        &Stmt::While(ref cond, ref stmts) => compile_while_stmt(ctx, cond, stmts, startline, endline),
-        &Stmt::Repeat(ref cond, ref stmts) => compile_repeat_stmt(ctx, cond, stmts, startline, endline),
-        &Stmt::If(ref ifthenelse) => compile_if_stmt(ctx, ifthenelse, startline, endline),
-        &Stmt::NumberFor(ref nfor) => compile_nfor_stmt(ctx, nfor, startline, endline),
-        &Stmt::GenericFor(ref gfor) => compile_gfor_stmt(ctx, gfor, startline, endline),
-        &Stmt::FuncDef(ref funcdef) => compile_assign_stmt(ctx, &funcdef.name, &funcdef.body),
-        &Stmt::MethodDef(ref methoddef) => {
-            let mut regtop = ctx.reg_top();
-            let mut treg = 0;
-            compile_expr_with_KMV_propagation(ctx, &methoddef.receiver, &mut regtop, &mut treg);
-            let kreg = load_rk(ctx, &mut regtop, &methoddef.body, Rc::new(Value::String(methoddef.method.clone())));
-            compile_expr(ctx, regtop, &methoddef.body, &ExprContext::new(ExprContextType::Method, REG_UNDEFINED, 0));
-            ctx.code.add_ABC(OP_SETTABLE, treg as i32, kreg as i32, regtop as i32, start_line(&methoddef.receiver))
-        }
-        &Stmt::Return(ref exprs) => compile_return_stmt(ctx, exprs, startline, endline),
-        &Stmt::Break => compile_break_stmt(ctx, startline),
-    }
-}
 
-fn patchcode(ctx: &mut FunctionContext) {
-    let mut maxreg = if ctx.proto.param_count > 1 { ctx.proto.param_count } else { 1 };
-    let mut moven = 0;
-    let mut pc = 0;
-    let lastpc = ctx.code.pc;
-    while pc < lastpc {
-        let inst = ctx.code.at(pc);
-        let curop = get_opcode(inst);
-        match curop {
-            OP_CLOSURE => {
-                pc += ctx.proto.prototypes[get_argbx(inst) as usize].upval_count as usize;
-                moven = 0;
-                continue;
-            }
-            OP_SETGLOBAL | OP_SETUPVAL | OP_EQ | OP_LT | OP_LE | OP_TEST |
-            OP_TAILCALL | OP_RETURN | OP_FORPREP | OP_FORLOOP | OP_TFORLOOP |
-            OP_SETLIST | OP_CLOSE => {}
-            OP_CALL => {
-                let reg = (get_arga(inst) + get_argb(inst) - 2) as u8;
-                if reg > maxreg {
-                    maxreg = reg;
-                }
-            }
-            OP_VARARG => {
-                let reg = (get_arga(inst) + get_argb(inst) - 1) as u8;
-                if reg > maxreg {
-                    maxreg = reg;
-                }
-            }
-            OP_SELF => {
-                let reg = (get_arga(inst) + 1) as u8;
-                if reg > maxreg {
-                    maxreg = reg;
-                }
-            }
-            OP_LOADNIL => {
-                let reg = get_argb(inst) as u8;
-                if reg > maxreg {
-                    maxreg = reg;
-                }
-            }
-            OP_JMP => {
-                let mut distance = 0;
-                let mut count = 0;
-                let mut jmp = inst;
-                while get_opcode(jmp) == OP_JMP && count < 5 {
-                    let d = ctx.get_label_pc(get_argsbx(jmp)) - pc;
-                    if d > OPCODE_MAXSBx as usize {
-                        if distance == 0 {
-                            panic!("too long to jump")
+        let count = if lastisvararg { 0 } else { reg - a + 1 };
+        self.code.add_ABC(OP_RETURN, a as i32, count as i32, 0, startline);
+    }
+
+    fn compile_break_stmt(&mut self, startline: u32) {
+        let mut blk = &self.block;
+        loop {
+            let label = blk.break_label;
+            if label != LABEL_NO_JUMP {
+                if blk.ref_upval {
+                    match blk.parent {
+                        Some(ref parent) => {
+                            self.code.add_ABC(OP_CLOSE, parent.locals.last_index() as i32, 0, 0, startline);
                         }
-                        break;
+                        None => unreachable!()
                     }
-                    distance = d;
-                    count += 1;
                 }
-
-                if distance == 0 {
-                    ctx.code.set_opcode(pc, OP_NOP);
-                } else {
-                    ctx.code.set_argsbx(pc, distance as i32);
-                }
-                jmp = ctx.code.at(pc + distance + 1);
-            }
-            _ => {
-                let reg = get_arga(inst) as u8;
-                if reg > maxreg {
-                    maxreg = reg;
-                }
+                self.code.add_ASBx(OP_JMP, 0, label as i32, startline);
+                return;
             }
         }
-        if curop == OP_MOVE {
-            moven += 1;
-        } else {
-            if moven > 1 {
-                ctx.code.set_opcode(pc - moven, OP_MOVEN);
-                let c = if moven - 1 < OPCODE_MAXC as usize { (moven - 1) as i32 } else { OPCODE_MAXC };
-                ctx.code.set_argc(pc - moven, c);
+        panic!("no loop to break: {}", startline);
+    }
+
+    fn compile_stmt(&mut self, stmt: &StmtNode) {
+        let (startline, endline) = (start_line(stmt), end_line(stmt));
+        match stmt.inner() {
+            &Stmt::Assign(ref lhs, ref rhs) => self.compile_assign_stmt(lhs, rhs),
+            &Stmt::LocalAssign(ref names, ref values) => self.compile_local_assign_stmt(names, values, startline),
+            &Stmt::FuncCall(ref expr) | &Stmt::MethodCall(ref expr) => {
+                let regtop = self.reg_top();
+                self.compile_fncall_expr(regtop, expr, &ExprContext::with_opt(-1));
             }
-            moven = 0;
+            &Stmt::DoBlock(ref stmts) => {
+                self.enter_block(LABEL_NO_JUMP, (startline, endline));
+                self.compile_chunk(stmts);
+                self.leave_block();
+            }
+            &Stmt::While(ref cond, ref stmts) => self.compile_while_stmt(cond, stmts, startline, endline),
+            &Stmt::Repeat(ref cond, ref stmts) => self.compile_repeat_stmt(cond, stmts, startline, endline),
+            &Stmt::If(ref ifthenelse) => self.compile_if_stmt(ifthenelse, startline, endline),
+            &Stmt::NumberFor(ref nfor) => self.compile_nfor_stmt(nfor, startline, endline),
+            &Stmt::GenericFor(ref gfor) => self.compile_gfor_stmt(gfor, startline, endline),
+            &Stmt::FuncDef(ref funcdef) => self.compile_assign_stmt(&funcdef.name, &funcdef.body),
+            &Stmt::MethodDef(ref methoddef) => {
+                let mut regtop = self.reg_top();
+                let mut treg = 0;
+                self.compile_expr_with_KMV_propagation(&methoddef.receiver, &mut regtop, &mut treg);
+                let kreg = self.load_rk(&mut regtop, &methoddef.body, Rc::new(Value::String(methoddef.method.clone())));
+                self.compile_expr(regtop, &methoddef.body, &ExprContext::new(ExprContextType::Method, REG_UNDEFINED, 0));
+                self.code.add_ABC(OP_SETTABLE, treg as i32, kreg as i32, regtop as i32, start_line(&methoddef.receiver))
+            }
+            &Stmt::Return(ref exprs) => self.compile_return_stmt(exprs, startline, endline),
+            &Stmt::Break => self.compile_break_stmt(startline),
         }
     }
 
-    maxreg += 1;
-    if maxreg > MAX_REGISTERS as u8 {
-        panic!("register overflow(too many local variables)")
-    }
-    ctx.proto.used_registers = maxreg as u8;
-}
+    fn patchcode(&mut self) {
+        let mut maxreg = if self.proto.param_count > 1 { self.proto.param_count } else { 1 };
+        let mut moven = 0;
+        let mut pc = 0;
+        let lastpc = self.code.pc;
+        while pc < lastpc {
+            let inst = self.code.at(pc);
+            let curop = get_opcode(inst);
+            match curop {
+                OP_CLOSURE => {
+                    pc += self.proto.prototypes[get_argbx(inst) as usize].upval_count as usize;
+                    moven = 0;
+                    continue;
+                }
+                OP_SETGLOBAL | OP_SETUPVAL | OP_EQ | OP_LT | OP_LE | OP_TEST |
+                OP_TAILCALL | OP_RETURN | OP_FORPREP | OP_FORLOOP | OP_TFORLOOP |
+                OP_SETLIST | OP_CLOSE => {}
+                OP_CALL => {
+                    let reg = (get_arga(inst) + get_argb(inst) - 2) as u8;
+                    if reg > maxreg {
+                        maxreg = reg;
+                    }
+                }
+                OP_VARARG => {
+                    let reg = (get_arga(inst) + get_argb(inst) - 1) as u8;
+                    if reg > maxreg {
+                        maxreg = reg;
+                    }
+                }
+                OP_SELF => {
+                    let reg = (get_arga(inst) + 1) as u8;
+                    if reg > maxreg {
+                        maxreg = reg;
+                    }
+                }
+                OP_LOADNIL => {
+                    let reg = get_argb(inst) as u8;
+                    if reg > maxreg {
+                        maxreg = reg;
+                    }
+                }
+                OP_JMP => {
+                    let mut distance = 0;
+                    let mut count = 0;
+                    let mut jmp = inst;
+                    while get_opcode(jmp) == OP_JMP && count < 5 {
+                        let d = self.get_label_pc(get_argsbx(jmp)) - pc;
+                        if d > OPCODE_MAXSBx as usize {
+                            if distance == 0 {
+                                panic!("too long to jump")
+                            }
+                            break;
+                        }
+                        distance = d;
+                        count += 1;
+                    }
 
-fn compile_func_expr(ctx: &mut FunctionContext, params: &ParList, stmts: &Vec<StmtNode>,
-                     expr_ctx: &ExprContext, startline: u32, endline: u32) {
-    ctx.proto.lineinfo = (startline, endline);
-    if params.names.len() > (MAX_REGISTERS as usize) {
-        panic!("register overflow")
-    }
-    ctx.proto.param_count = params.names.len() as u8;
-    if expr_ctx.typ == ExprContextType::Method {
-        ctx.proto.param_count += 1;
-        ctx.register_local_var(String::from("self"));
-    }
-    for name in &params.names {
-        ctx.register_local_var(name.clone());
-    }
-
-    if params.vargs {
-        // compact vararg
-        ctx.proto.is_vararg = VARARG_HAS | VARARG_NEED;
-        if let Some(_) = ctx.parent {
-            ctx.register_local_var(String::from("arg"));
+                    if distance == 0 {
+                        self.code.set_opcode(pc, OP_NOP);
+                    } else {
+                        self.code.set_argsbx(pc, distance as i32);
+                    }
+                    jmp = self.code.at(pc + distance + 1);
+                }
+                _ => {
+                    let reg = get_arga(inst) as u8;
+                    if reg > maxreg {
+                        maxreg = reg;
+                    }
+                }
+            }
+            if curop == OP_MOVE {
+                moven += 1;
+            } else {
+                if moven > 1 {
+                    self.code.set_opcode(pc - moven, OP_MOVEN);
+                    let c = if moven - 1 < OPCODE_MAXC as usize { (moven - 1) as i32 } else { OPCODE_MAXC };
+                    self.code.set_argc(pc - moven, c);
+                }
+                moven = 0;
+            }
         }
-        ctx.proto.is_vararg |= VARARG_IS;
+
+        maxreg += 1;
+        if maxreg > MAX_REGISTERS as u8 {
+            panic!("register overflow(too many local variables)")
+        }
+        self.proto.used_registers = maxreg as u8;
     }
 
-    compile_chunk(ctx, stmts);
+    fn compile_func_expr(&mut self, params: &ParList, stmts: &Vec<StmtNode>,
+                         expr_ctx: &ExprContext, startline: u32, endline: u32) {
+        self.proto.lineinfo = (startline, endline);
+        if params.names.len() > (MAX_REGISTERS as usize) {
+            panic!("register overflow")
+        }
+        self.proto.param_count = params.names.len() as u8;
+        if expr_ctx.typ == ExprContextType::Method {
+            self.proto.param_count += 1;
+            self.register_local_var(String::from("self"));
+        }
+        for name in &params.names {
+            self.register_local_var(name.clone());
+        }
 
-    ctx.code.add_ABC(OP_RETURN, 0, 1, 0, endline);
-    ctx.end_scope();
-    let mut codestore = CodeStore::new();
+        if params.vargs {
+            // compact vararg
+            self.proto.is_vararg = VARARG_HAS | VARARG_NEED;
+            if let Some(_) = self.parent {
+                self.register_local_var(String::from("arg"));
+            }
+            self.proto.is_vararg |= VARARG_IS;
+        }
 
-    // TODO: thinking
-    patchcode(ctx);
+        self.compile_chunk(stmts);
 
-    ctx.proto.code = ctx.code.list();
-    ctx.proto.debug_pos = ctx.code.line_list();
-    ctx.proto.debug_upval = ctx.upval.names();
-    ctx.proto.upval_count = ctx.proto.debug_upval.len() as u8;
-    let mut strv: Vec<String> = vec![];
-    for clv in &ctx.proto.constants {
-        let sv = if let Value::String(ref s) = **clv { s.clone() } else { String::new() };
-        strv.push(sv);
+        self.code.add_ABC(OP_RETURN, 0, 1, 0, endline);
+        self.end_scope();
+        let mut codestore = CodeStore::new();
+
+        // TODO: thinking
+        self.patchcode();
+
+        self.proto.code = self.code.list();
+        self.proto.debug_pos = self.code.line_list();
+        self.proto.debug_upval = self.upval.names();
+        self.proto.upval_count = self.proto.debug_upval.len() as u8;
+        let mut strv: Vec<String> = vec![];
+        for clv in &self.proto.constants {
+            let sv = if let Value::String(ref s) = **clv { s.clone() } else { String::new() };
+            strv.push(sv);
+        }
+        self.proto.strings = strv;
     }
-    ctx.proto.strings = strv;
 }
 
 pub fn compile(stmts: Vec<StmtNode>, name: String) -> Result<Box<FunctionProto>> {
     //println!("{:#?}", stmts);
-    let mut ctx = FunctionContext::new(name, None);
+    let mut compiler = Compiler::new(name, None);
     let mut par = ParList::new();
     par.set_vargs(true);
-    compile_func_expr(&mut ctx, &par, &stmts, &ExprContext::with_opt(0), 0, 0);
-    Ok(ctx.proto)
+    compiler.compile_func_expr(&par, &stmts, &ExprContext::with_opt(0), 0, 0);
+    Ok(compiler.proto)
 }
