@@ -9,8 +9,8 @@ This project is being completed. If you are interested, welcome to contribute co
 |  Scanner     | √                 | ×            |    √                    |
 |  Parser      | √                 | ×            |    √                    |
 |  Instruction | √                 | ×            |    ×                    |
-|  Compiler    | working           | ×            |    ×                    |
-|  VM          | ×                 | ×            |    ×                    |
+|  Compiler    | √                 | ×            |    ×                    |
+|  VM          | working           | ×            |    ×                    |
 |  dump/undump | ×                 | ×            |    ×                    |
 |  stdlibs     | ×                 | ×            |    ×                    |
 
