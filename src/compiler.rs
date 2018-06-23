@@ -856,7 +856,7 @@ impl<'p> Compiler<'p> {
         let mut flip = 0;
         let mut jumplabel = elselabel;
         if hasnextcond {
-            flip - 1;
+            flip = 1;
             jumplabel = thenlabel;
         }
 
