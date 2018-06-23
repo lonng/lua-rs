@@ -251,6 +251,7 @@ impl<R: Read> Parser<R> {
 
     fn constructor(&mut self) -> Result<ExprNode> {
         debug_assert!(self.token == Token::Char('{'));
+        let line = self.line_number;
         let mut fields: Vec<Field> = vec![];
         self.next()?;
         while self.token != Token::Char('}') {
@@ -261,9 +262,11 @@ impl<R: Read> Parser<R> {
                 _ => {}
             }
         }
-        let line = self.line_number;
         self.check_next(Token::Char('}'))?;
-        Ok(ExprNode::new(Expr::Table(fields)))
+        let mut exprnode = ExprNode::new(Expr::Table(fields));
+        exprnode.set_line(line);
+        exprnode.set_last_line(self.prev_number);
+        Ok(exprnode)
     }
 
     /// ```BNF
@@ -295,6 +298,7 @@ impl<R: Read> Parser<R> {
     }
 
     fn funcbody(&mut self) -> Result<ExprNode> {
+        let line = self.line_number;
         // paramater list
         self.check_next(Token::Char('('))?;
         let mut parlist = ParList::new();
@@ -309,9 +313,12 @@ impl<R: Read> Parser<R> {
         self.check_next(Token::Char(')'))?;
 
         let block = self.block()?;
-        let line = self.line_number;
         self.check_next(Token::End)?;
-        Ok(ExprNode::new(Expr::Function(parlist, block)))
+
+        let mut exprnode = ExprNode::new(Expr::Function(parlist, block));
+        exprnode.set_line(line);
+        exprnode.set_last_line(self.prev_number);
+        Ok(exprnode)
     }
 
     fn function(&mut self) -> Result<ExprNode> {
@@ -341,8 +348,6 @@ impl<R: Read> Parser<R> {
             }
             _ => return Err(self.unexpected(&self.token))
         };
-        expr.set_line(line);
-        expr.set_last_line(self.line_number);
         self.next()?;
         Ok(expr)
     }
@@ -388,11 +393,16 @@ impl<R: Read> Parser<R> {
         let line = self.line_number;
         let mut expr = self.prefixexp()?;
         loop {
+            expr.set_line(line);
+            expr.set_last_line(self.prev_number);
             match self.token {
                 Token::Char('.') => {
                     self.next()?;
                     if let Token::Ident(ref s) = self.token {
-                        let key = ExprNode::new(Expr::String(s.clone()));
+                        let line = self.line_number;
+                        let mut key = ExprNode::new(Expr::String(s.clone()));
+                        key.set_line(line);
+                        key.set_last_line(line);
                         let mut obj = Expr::AttrGet(Box::new(expr), Box::new(key));
                         expr = ExprNode::new(obj);
                     } else {
@@ -425,8 +435,6 @@ impl<R: Read> Parser<R> {
                     expr = ExprNode::new(Expr::FuncCall(Box::new(call)));
                 }
                 _ => {
-                    expr.set_line(line);
-                    expr.set_last_line(self.prev_number);
                     return Ok(expr)
                 }
             };
@@ -440,7 +448,6 @@ impl<R: Read> Parser<R> {
     /// constructor | FUNCTION body | primaryexp
     /// ```
     fn simple_expr(&mut self) -> Result<ExprNode> {
-        let line = self.line_number;
         let mut node = match self.token {
             Token::True => ExprNode::new(Expr::True),
             Token::False => ExprNode::new(Expr::False),
@@ -467,6 +474,8 @@ impl<R: Read> Parser<R> {
         } else {
             self.simple_expr()?
         };
+        expr.set_line(line);
+        expr.set_last_line(self.prev_number);
 
         let mut op = binary_op(&self.token);
         loop {
@@ -555,14 +564,18 @@ impl<R: Read> Parser<R> {
         let init = self.expression()?;
         self.check_next(Token::Char(','))?;
         let limit = self.expression()?;
-        // skip optional
-        let skip = if self.testnext(&Token::Char(','))? {
+        // step optional
+        let line = self.line_number;
+        let mut step = if self.testnext(&Token::Char(','))? {
             self.expression()?
         } else {
             ExprNode::new(Expr::Number(1.0))
         };
+        step.set_line(line);
+        step.set_last_line(self.prev_number);
+
         let body = self.forbody()?;
-        let stmt = Stmt::NumberFor(NumberFor::new(varname, init, limit, skip, body));
+        let stmt = Stmt::NumberFor(NumberFor::new(varname, init, limit, step, body));
         Ok(StmtNode::new(stmt))
     }
 
@@ -620,21 +633,27 @@ impl<R: Read> Parser<R> {
 
     fn funcstat(&mut self) -> Result<StmtNode> {
         debug_assert!(self.token == Token::Function);
-        self.next()?; // skip FUNCTION
+        let line = self.line_number;
 
+        self.next()?; // skip FUNCTION
         // funcname
         let mut nameexpr = if let Token::Ident(ref s) = self.token {
-            ExprNode::new(Expr::String(s.clone()))
+            ExprNode::new(Expr::Ident(s.clone()))
         } else {
             return Err(self.unexpected(&self.token));
         };
         self.next()?;
+        nameexpr.set_line(line);
+        nameexpr.set_last_line(self.prev_number);
 
         while self.testnext(&Token::Char('.'))? {
             if let Token::Ident(ref s) = self.token {
                 let key = ExprNode::new(Expr::String(s.clone()));
+                let line = self.line_number;
                 let mut obj = Expr::AttrGet(Box::new(nameexpr), Box::new(key));
                 nameexpr = ExprNode::new(obj);
+                nameexpr.set_line(line);
+                nameexpr.set_last_line(self.prev_number);
             } else {
                 return Err(self.unexpected(&self.token));
             }
@@ -668,12 +687,15 @@ impl<R: Read> Parser<R> {
     }
 
     fn localfunc(&mut self) -> Result<StmtNode> {
+        let line = self.line_number;
         let mut nameexpr = if let Token::Ident(ref s) = self.token {
-            ExprNode::new(Expr::String(s.clone()))
+            ExprNode::new(Expr::Ident(s.clone()))
         } else {
             return Err(self.unexpected(&self.token));
         };
         self.next()?;
+        nameexpr.set_line(line);
+        nameexpr.set_last_line(self.prev_number);
         let body = self.funcbody()?;
         let stmt = Stmt::FuncDef(FuncDef::new(nameexpr, body));
         Ok(StmtNode::new(stmt))
