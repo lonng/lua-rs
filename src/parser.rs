@@ -365,7 +365,7 @@ impl<R: Read> Parser<R> {
             Token::Char('{') => vec![self.constructor()?],
             Token::String(ref s) => {
                 next = true;
-                let mut expr = ExprNode::new(Expr::Ident(s.clone()));
+                let mut expr = ExprNode::new(Expr::String(s.clone()));
                 expr.set_line(line);
                 expr.set_last_line(self.line_number);
                 vec![expr]
