@@ -334,7 +334,7 @@ impl<R: Read> Scanner<R> {
                         return Ok(ret);
                     }
                 }
-                '\r' => self.current = '\n',
+                '\r' => self.advance(),
                 '\n' => {
                     let current = self.current;
                     self.save(current);
