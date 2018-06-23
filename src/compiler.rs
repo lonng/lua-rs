@@ -5,8 +5,10 @@ use ast::*;
 use instruction::*;
 use std::borrow::BorrowMut;
 use std::collections::HashMap;
+use std::fmt::{Debug, Error as FmtError, Formatter};
 use std::mem::{replace, swap};
 use std::rc::Rc;
+use std::result::Result as StdResult;
 use value::*;
 
 const MAX_REGISTERS: i32 = 200;
@@ -262,6 +264,16 @@ impl Instructions {
     }
 }
 
+impl Debug for Instructions {
+    fn fmt(&self, f: &mut Formatter) -> StdResult<(), FmtError> {
+        writeln!(f, "PC: <{}>", self.pc);
+        for (i, inst) in self.insts.iter().enumerate() {
+            writeln!(f, "\t<{:04}:L{:04}> {}", i, self.lines[i], to_string(*inst));
+        }
+        Ok(())
+    }
+}
+
 /// Variable
 #[derive(Debug)]
 struct Var {
@@ -385,6 +397,7 @@ const VARARG_HAS: u8 = 1;
 const VARARG_IS: u8 = 2;
 const VARARG_NEED: u8 = 4;
 
+#[derive(Debug)]
 struct DebugLocalInfo {
     name: String,
     /// start pc
@@ -417,6 +430,13 @@ impl DebugCall {
     }
 }
 
+impl Debug for DebugCall {
+    fn fmt(&self, f: &mut Formatter) -> StdResult<(), FmtError> {
+        write!(f, "<{:04}> {}", self.pc, self.name)
+    }
+}
+
+#[derive(Debug)]
 pub struct FunctionProto {
     source: String,
     /// lineinfo: (startline, endline)
@@ -460,6 +480,7 @@ impl FunctionProto {
     }
 }
 
+#[derive(Debug)]
 struct Compiler<'p> {
     proto: Box<FunctionProto>,
     code: Instructions,
@@ -592,7 +613,11 @@ impl<'p> Compiler<'p> {
 
     fn compile_chunk(&mut self, chunk: &Vec<StmtNode>) {
         for stmt in chunk.iter() {
-            self.compile_stmt(stmt)
+            println!("===============================");
+            println!("{:#?}", stmt);
+            self.compile_stmt(stmt);
+            println!("===============================");
+            println!("{:#?}", self);
         }
     }
 
@@ -694,8 +719,8 @@ impl<'p> Compiler<'p> {
                 }
             }
 
-            self.code.set_argb(tablepc, int2fb(tablereg as i32));
-            self.code.set_argc(tablepc, int2fb((fieldlen - tablereg) as i32));
+            self.code.set_argb(tablepc, int2fb(array_count as i32));
+            self.code.set_argc(tablepc, int2fb(fieldlen as i32 - array_count));
             if expr_ctx.scope == ExprScope::Local && expr_ctx.reg != tablereg {
                 self.code.add_ABC(OP_MOVE, expr_ctx.reg as i32, tablereg as i32, 0, start_line(table))
             }
@@ -705,7 +730,9 @@ impl<'p> Compiler<'p> {
     }
 
     fn compile_fncall_expr(&mut self, mut reg: usize, expr: &ExprNode, expr_ctx: &ExprContext) -> usize {
-        if expr_ctx.scope == ExprScope::Local && expr_ctx.reg == self.proto.param_count as usize - 1 {
+        if expr_ctx.scope == ExprScope::Local
+            && self.proto.param_count > 0
+            && expr_ctx.reg == self.proto.param_count as usize - 1 {
             reg = expr_ctx.reg
         }
         let funcreg = reg;
@@ -753,12 +780,12 @@ impl<'p> Compiler<'p> {
         self.code.add_ABC(OP_CALL, funcreg as i32, b as i32, expr_ctx.opt + 2, start_line(expr));
         self.proto.debug_calls.push(DebugCall::new(name, self.code.last_pc()));
 
-        if expr_ctx.opt == 2 && expr_ctx.scope == ExprScope::Local && funcreg != expr_ctx.reg {
+        if expr_ctx.opt == 0 && expr_ctx.scope == ExprScope::Local && funcreg != expr_ctx.reg {
             self.code.add_ABC(OP_MOVE, expr_ctx.reg as i32, funcreg as i32, 0, start_line(expr));
             return 1;
         }
 
-        if self.reg_top() > (funcreg + 2 + expr_ctx.opt as usize) || expr_ctx.opt < -1 {
+        if self.reg_top() > (funcreg + (expr_ctx.opt + 2) as usize) || expr_ctx.opt < -1 {
             return 0;
         }
 
@@ -1042,7 +1069,7 @@ impl<'p> Compiler<'p> {
             &Expr::Nil => self.code.add_ABC(OP_LOADNIL, svreg, svreg, 0, start_line(expr)),
             &Expr::Number(f) => {
                 let num = self.const_index(Rc::new(Value::Number(f)));
-                self.code.add_ABx(OP_LOADBOOL, svreg, num as i32, start_line(expr))
+                self.code.add_ABx(OP_LOADK, svreg, num as i32, start_line(expr))
             }
             &Expr::String(ref s) => {
                 let index = self.const_index(Rc::new(Value::String(s.clone())));
@@ -1065,7 +1092,7 @@ impl<'p> Compiler<'p> {
                 match identtype {
                     ExprScope::Global => {
                         let index = self.const_index(Rc::new(Value::String(s.clone())));
-                        self.code.add_ABx(OP_LOADK, svreg, index as i32, start_line(expr))
+                        self.code.add_ABx(OP_GETGLOBAL, svreg, index as i32, start_line(expr))
                     }
                     ExprScope::Upval => {
                         let index = self.upval.register_unique(s.clone());
@@ -1692,8 +1719,8 @@ impl<'p> Compiler<'p> {
                     let mut count = 0;
                     let mut jmp = inst;
                     while get_opcode(jmp) == OP_JMP && count < 5 {
-                        let d = self.get_label_pc(get_argsbx(jmp)) - pc;
-                        if d > OPCODE_MAXSBx as usize {
+                        let d = self.get_label_pc(get_argsbx(jmp)) as i32 - pc as i32;
+                        if d > OPCODE_MAXSBx {
                             if distance == 0 {
                                 panic!("too long to jump")
                             }
@@ -1701,6 +1728,7 @@ impl<'p> Compiler<'p> {
                         }
                         distance = d;
                         count += 1;
+                        jmp = self.code.at((pc as i32 + distance + 1) as usize);
                     }
 
                     if distance == 0 {
@@ -1708,7 +1736,6 @@ impl<'p> Compiler<'p> {
                     } else {
                         self.code.set_argsbx(pc, distance as i32);
                     }
-                    jmp = self.code.at(pc + distance + 1);
                 }
                 _ => {
                     let reg = get_arga(inst) as u8;
@@ -1727,6 +1754,8 @@ impl<'p> Compiler<'p> {
                 }
                 moven = 0;
             }
+
+            pc += 1;
         }
 
         maxreg += 1;
@@ -1783,10 +1812,12 @@ impl<'p> Compiler<'p> {
 }
 
 pub fn compile(stmts: Vec<StmtNode>, name: String) -> Result<Box<FunctionProto>> {
-    println!("{:#?}", stmts);
+    //println!("{:#?}", stmts);
     let mut compiler = Compiler::new(name, None);
     let mut par = ParList::new();
     par.set_vargs(true);
     compiler.compile_func_expr(&par, &stmts, &ExprContext::with_opt(0), 0, 0);
+    println!("{:#?}", compiler);
     Ok(compiler.proto)
+
 }

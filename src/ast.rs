@@ -87,7 +87,10 @@ pub enum Expr {
 
 impl Expr {
     pub fn is_vararg(&self) -> bool {
-        if let &Expr::Dots = self { true } else { false }
+        match self {
+            &Expr::Dots | &Expr::FuncCall(_) => true,
+            _ => false,
+        }
     }
 }
 

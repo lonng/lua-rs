@@ -1,14 +1,12 @@
 print "hello"
-print "hello"
-print "hello"
-print "hello"
-print "hello"
-print "hello"
-print "hello"
 
-if 100 then
-    print "1000000"
+local x = 100;
+if x then
+    print(x)
 end
+
+local y = 100;
+print(y);
 
 -- hello comment
 
