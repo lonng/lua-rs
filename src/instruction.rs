@@ -1,4 +1,7 @@
 #![allow(non_snake_case)]
+#![allow(non_snake_case_globals)]
+
+use std::fmt::Display;
 
 pub const INVALID_INSTRUCTION: u32 = 0xFFFFFFFF;
 
@@ -132,7 +135,17 @@ enum OpArgMode {
 enum OpType {
     ABC,
     ABx,
-    ASbx,
+    ASBx,
+}
+
+impl ToString for OpType {
+    fn to_string(&self) -> String {
+        match self {
+            &OpType::ABC => "ABC".to_string(),
+            &OpType::ABx => "ABx".to_string(),
+            &OpType::ASBx => "ASBx".to_string(),
+        }
+    }
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
@@ -171,7 +184,7 @@ static OP_NAMES: &'static [OpProp; (OP_NOP as usize + 1)] = &[
     OpProp { name: "NOT", is_test: false, set_reg_a: true, mode_arg_b: OpArgMode::R, mode_arg_c: OpArgMode::N, typ: OpType::ABC },
     OpProp { name: "LEN", is_test: false, set_reg_a: true, mode_arg_b: OpArgMode::R, mode_arg_c: OpArgMode::N, typ: OpType::ABC },
     OpProp { name: "CONCAT", is_test: false, set_reg_a: true, mode_arg_b: OpArgMode::R, mode_arg_c: OpArgMode::R, typ: OpType::ABC },
-    OpProp { name: "JMP", is_test: false, set_reg_a: false, mode_arg_b: OpArgMode::R, mode_arg_c: OpArgMode::N, typ: OpType::ASbx },
+    OpProp { name: "JMP", is_test: false, set_reg_a: false, mode_arg_b: OpArgMode::R, mode_arg_c: OpArgMode::N, typ: OpType::ASBx },
     OpProp { name: "EQ", is_test: true, set_reg_a: false, mode_arg_b: OpArgMode::K, mode_arg_c: OpArgMode::K, typ: OpType::ABC },
     OpProp { name: "LT", is_test: true, set_reg_a: false, mode_arg_b: OpArgMode::K, mode_arg_c: OpArgMode::K, typ: OpType::ABC },
     OpProp { name: "LE", is_test: true, set_reg_a: false, mode_arg_b: OpArgMode::K, mode_arg_c: OpArgMode::K, typ: OpType::ABC },
@@ -180,14 +193,14 @@ static OP_NAMES: &'static [OpProp; (OP_NOP as usize + 1)] = &[
     OpProp { name: "CALL", is_test: false, set_reg_a: true, mode_arg_b: OpArgMode::U, mode_arg_c: OpArgMode::U, typ: OpType::ABC },
     OpProp { name: "TAILCALL", is_test: false, set_reg_a: true, mode_arg_b: OpArgMode::U, mode_arg_c: OpArgMode::U, typ: OpType::ABC },
     OpProp { name: "RETURN", is_test: false, set_reg_a: false, mode_arg_b: OpArgMode::U, mode_arg_c: OpArgMode::N, typ: OpType::ABC },
-    OpProp { name: "FORLOOP", is_test: false, set_reg_a: true, mode_arg_b: OpArgMode::R, mode_arg_c: OpArgMode::N, typ: OpType::ASbx },
-    OpProp { name: "FORPREP", is_test: false, set_reg_a: true, mode_arg_b: OpArgMode::R, mode_arg_c: OpArgMode::N, typ: OpType::ASbx },
+    OpProp { name: "FORLOOP", is_test: false, set_reg_a: true, mode_arg_b: OpArgMode::R, mode_arg_c: OpArgMode::N, typ: OpType::ASBx },
+    OpProp { name: "FORPREP", is_test: false, set_reg_a: true, mode_arg_b: OpArgMode::R, mode_arg_c: OpArgMode::N, typ: OpType::ASBx },
     OpProp { name: "TFORLOOP", is_test: true, set_reg_a: false, mode_arg_b: OpArgMode::N, mode_arg_c: OpArgMode::U, typ: OpType::ABC },
     OpProp { name: "SETLIST", is_test: false, set_reg_a: false, mode_arg_b: OpArgMode::U, mode_arg_c: OpArgMode::U, typ: OpType::ABC },
     OpProp { name: "CLOSE", is_test: false, set_reg_a: false, mode_arg_b: OpArgMode::N, mode_arg_c: OpArgMode::N, typ: OpType::ABC },
     OpProp { name: "CLOSURE", is_test: false, set_reg_a: true, mode_arg_b: OpArgMode::U, mode_arg_c: OpArgMode::N, typ: OpType::ABx },
     OpProp { name: "VARARG", is_test: false, set_reg_a: true, mode_arg_b: OpArgMode::U, mode_arg_c: OpArgMode::N, typ: OpType::ABC },
-    OpProp { name: "NOP", is_test: false, set_reg_a: false, mode_arg_b: OpArgMode::R, mode_arg_c: OpArgMode::N, typ: OpType::ASbx },
+    OpProp { name: "NOP", is_test: false, set_reg_a: false, mode_arg_b: OpArgMode::R, mode_arg_c: OpArgMode::N, typ: OpType::ASBx },
 ];
 
 pub fn op_to_string(op: i32) -> String {
@@ -308,53 +321,55 @@ pub fn to_string(inst: Instruction) -> String {
     let argsbx = get_argsbx(inst);
 
     let ops = match prop.typ {
-        OpType::ABC => format!("{}      |  {}, {}, {}", prop.name, arga, argb, argc),
-        OpType::ABx => format!("{}      |  {}, {}", prop.name, arga, argbx),
-        OpType::ASbx => format!("{}      |  {}, {}", prop.name, arga, argsbx)
+        OpType::ABC => format!("{:10}| {:4} | {:4}, {:4}, {:4}", prop.name, prop.typ.to_string(), arga, argb, argc),
+        OpType::ABx => format!("{:10}| {:4} | {:4}, {:4}", prop.name, prop.typ.to_string(),arga, argbx),
+        OpType::ASBx => format!("{:10}| {:4} | {:4}, {:4}", prop.name, prop.typ.to_string(), arga, argsbx)
     };
 
+    let ops = format!("{:36}", ops);
+
     match op {
-        OP_MOVE => format!("{}; R({}) := R({})", ops, arga, argb),
-        OP_MOVEN => format!("{}; R({}) := R({}); followed by {} MOVE ops", ops, arga, argb, argc),
-        OP_LOADK => format!("{}; R({}) := Kst({})", ops, arga, argbx),
-        OP_LOADBOOL => format!("{}; R({}) := (Bool){}; if ({}) pc++", ops, arga, argb, argc),
-        OP_LOADNIL => format!("{}; R({}) := ... := R({}) := nil", ops, arga, argb),
-        OP_GETUPVAL => format!("{}; R({}) := UpValue[{}]", ops, arga, argb),
-        OP_GETGLOBAL => format!("{}; R({}) := Gbl[Kst({})]", ops, arga, argbx),
-        OP_GETTABLE => format!("{}; R({}) := R({})[RK({})]", ops, arga, argb, argc),
-        OP_GETTABLEKS => format!("{}; R({}) := R({})[RK({})] ; RK({}) is constant string", ops, arga, argb, argc, argc),
-        OP_SETGLOBAL => format!("{}; Gbl[Kst({})] := R({})", ops, argbx, arga),
-        OP_SETUPVAL => format!("{}; UpValue[{}] := R({})", ops, argb, arga),
-        OP_SETTABLE => format!("{}; R({})[RK({})] := RK({})", ops, arga, argb, argc),
-        OP_SETTABLEKS => format!("{}; R({})[RK({})] := RK({}) ; RK({}) is constant string", ops, arga, argb, argc, argb),
-        OP_NEWTABLE => format!("{}; R({}) := {{}} (size = BC)", ops, arga),
-        OP_SELF => format!("{}; R({}+1) := R({}); R({}) := R({})[RK({})]", ops, arga, argb, arga, argb, argc),
-        OP_ADD => format!("{}; R({}) := RK({}) + RK({})", ops, arga, argb, argc),
-        OP_SUB => format!("{}; R({}) := RK({}) - RK({})", ops, arga, argb, argc),
-        OP_MUL => format!("{}; R({}) := RK({}) * RK({})", ops, arga, argb, argc),
-        OP_DIV => format!("{}; R({}) := RK({}) / RK({})", ops, arga, argb, argc),
-        OP_MOD => format!("{}; R({}) := RK({}) %% RK({})", ops, arga, argb, argc),
-        OP_POW => format!("{}; R({}) := RK({}) ^ RK({})", ops, arga, argb, argc),
-        OP_UNM => format!("{}; R({}) := -R({})", ops, arga, argb),
-        OP_NOT => format!("{}; R({}) := not R({})", ops, arga, argb),
-        OP_LEN => format!("{}; R({}) := length of R({})", ops, arga, argb),
-        OP_CONCAT => format!("{}; R({}) := R({}).. ... ..R({})", ops, arga, argb, argc),
-        OP_JMP => format!("{}; pc+={}", ops, argsbx),
-        OP_EQ => format!("{}; if ((RK({}) == RK({})) ~= {}) then pc++", ops, argb, argc, arga),
-        OP_LT => format!("{}; if ((RK({}) <  RK({})) ~= {}) then pc++", ops, argb, argc, arga),
-        OP_LE => format!("{}; if ((RK({}) <= RK({})) ~= {}) then pc++", ops, argb, argc, arga),
-        OP_TEST => format!("{}; if not (R({}) <=> {}) then pc++", ops, arga, argc),
-        OP_TESTSET => format!("{}; if (R({}) <=> {}) then R({}) := R({}) else pc++", ops, argb, argc, arga, argb),
-        OP_CALL => format!("{}; R({}) ... R({}+{}-2) := R({})(R({}+1) ... R({}+{}-1))", ops, arga, arga, argc, arga, arga, arga, argb),
-        OP_TAILCALL => format!("{}; return R({})(R({}+1) ... R({}+{}-1))", ops, arga, arga, arga, argb),
-        OP_RETURN => format!("{}; return R({}) ... R({}+{}-2)", ops, arga, arga, argb),
-        OP_FORLOOP => format!("{}; R({})+=R({}+2); if R({}) <?= R({}+1) then {{ pc+={}; R({}+3)=R({}) }}", ops, arga, arga, arga, arga, argsbx, arga, arga),
-        OP_FORPREP => format!("{}; R({})-=R({}+2); pc+={}", ops, arga, arga, argsbx),
-        OP_TFORLOOP => format!("{}; R({}+3) ... R({}+3+{}) := R({})(R({}+1) R({}+2)); if R({}+3) ~= nil then {{ pc++; R({}+2)=R({}+3); }}", ops, arga, arga, argc, arga, arga, arga, arga, arga, arga),
-        OP_SETLIST => format!("{}; R({})[({}-1)*FPF+i] := R({}+i) 1 <= i <= {}", ops, arga, argc, arga, argb),
-        OP_CLOSE => format!("{}; close all variables in the stack up to (>=) R({})", ops, arga),
-        OP_CLOSURE => format!("{}; R({}) := closure(KPROTO[{}] R({}) ... R({}+n))", ops, arga, argbx, arga, arga),
-        OP_VARARG => format!("{};  R({}) R({}+1) ... R({}+{}-1) = vararg", ops, arga, arga, arga, argb),
+        OP_MOVE => format!("{} | R({}) := R({})", ops, arga, argb),
+        OP_MOVEN => format!("{} | R({}) := R({}); followed by {} MOVE ops", ops, arga, argb, argc),
+        OP_LOADK => format!("{} | R({}) := Kst({})", ops, arga, argbx),
+        OP_LOADBOOL => format!("{} | R({}) := (Bool){}; if ({}) pc++", ops, arga, argb, argc),
+        OP_LOADNIL => format!("{} | R({}) := ... := R({}) := nil", ops, arga, argb),
+        OP_GETUPVAL => format!("{} | R({}) := UpValue[{}]", ops, arga, argb),
+        OP_GETGLOBAL => format!("{} | R({}) := Gbl[Kst({})]", ops, arga, argbx),
+        OP_GETTABLE => format!("{} | R({}) := R({})[RK({})]", ops, arga, argb, argc),
+        OP_GETTABLEKS => format!("{} | R({}) := R({})[RK({})] ; RK({}) is constant string", ops, arga, argb, argc, argc),
+        OP_SETGLOBAL => format!("{} | Gbl[Kst({})] := R({})", ops, argbx, arga),
+        OP_SETUPVAL => format!("{} | UpValue[{}] := R({})", ops, argb, arga),
+        OP_SETTABLE => format!("{} | R({})[RK({})] := RK({})", ops, arga, argb, argc),
+        OP_SETTABLEKS => format!("{} | R({})[RK({})] := RK({}) ; RK({}) is constant string", ops, arga, argb, argc, argb),
+        OP_NEWTABLE => format!("{} | R({}) := {{}} (size = BC)", ops, arga),
+        OP_SELF => format!("{} | R({}+1) := R({}); R({}) := R({})[RK({})]", ops, arga, argb, arga, argb, argc),
+        OP_ADD => format!("{} | R({}) := RK({}) + RK({})", ops, arga, argb, argc),
+        OP_SUB => format!("{} | R({}) := RK({}) - RK({})", ops, arga, argb, argc),
+        OP_MUL => format!("{} | R({}) := RK({}) * RK({})", ops, arga, argb, argc),
+        OP_DIV => format!("{} | R({}) := RK({}) / RK({})", ops, arga, argb, argc),
+        OP_MOD => format!("{} | R({}) := RK({}) %% RK({})", ops, arga, argb, argc),
+        OP_POW => format!("{} | R({}) := RK({}) ^ RK({})", ops, arga, argb, argc),
+        OP_UNM => format!("{} | R({}) := -R({})", ops, arga, argb),
+        OP_NOT => format!("{} | R({}) := not R({})", ops, arga, argb),
+        OP_LEN => format!("{} | R({}) := length of R({})", ops, arga, argb),
+        OP_CONCAT => format!("{} | R({}) := R({}).. ... ..R({})", ops, arga, argb, argc),
+        OP_JMP => format!("{} | pc+={}", ops, argsbx),
+        OP_EQ => format!("{} | if ((RK({}) == RK({})) ~= {}) then pc++", ops, argb, argc, arga),
+        OP_LT => format!("{} | if ((RK({}) <  RK({})) ~= {}) then pc++", ops, argb, argc, arga),
+        OP_LE => format!("{} | if ((RK({}) <= RK({})) ~= {}) then pc++", ops, argb, argc, arga),
+        OP_TEST => format!("{} | if not (R({}) <=> {}) then pc++", ops, arga, argc),
+        OP_TESTSET => format!("{} | if (R({}) <=> {}) then R({}) := R({}) else pc++", ops, argb, argc, arga, argb),
+        OP_CALL => format!("{} | R({}) ... R({}+{}-2) := R({})(R({}+1) ... R({}+{}-1))", ops, arga, arga, argc, arga, arga, arga, argb),
+        OP_TAILCALL => format!("{} | return R({})(R({}+1) ... R({}+{}-1))", ops, arga, arga, arga, argb),
+        OP_RETURN => format!("{} | return R({}) ... R({}+{}-2)", ops, arga, arga, argb),
+        OP_FORLOOP => format!("{} | R({})+=R({}+2); if R({}) <?= R({}+1) then {{ pc+={}; R({}+3)=R({}) }}", ops, arga, arga, arga, arga, argsbx, arga, arga),
+        OP_FORPREP => format!("{} | R({})-=R({}+2); pc+={}", ops, arga, arga, argsbx),
+        OP_TFORLOOP => format!("{} | R({}+3) ... R({}+3+{}) := R({})(R({}+1) R({}+2)); if R({}+3) ~= nil then {{ pc++; R({}+2)=R({}+3); }}", ops, arga, arga, argc, arga, arga, arga, arga, arga, arga),
+        OP_SETLIST => format!("{} | R({})[({}-1)*FPF+i] := R({}+i) 1 <= i <= {}", ops, arga, argc, arga, argb),
+        OP_CLOSE => format!("{} | close all variables in the stack up to (>=) R({})", ops, arga),
+        OP_CLOSURE => format!("{} | R({}) := closure(KPROTO[{}] R({}) ... R({}+n))", ops, arga, argbx, arga, arga),
+        OP_VARARG => format!("{} |  R({}) R({}+1) ... R({}+{}-1) = vararg", ops, arga, arga, arga, argb),
         OP_NOP => String::new(),
         _ => unreachable!()
     }
