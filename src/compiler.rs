@@ -220,6 +220,10 @@ impl Instructions {
         Vec::from(&self.lines[..pc])
     }
 
+    fn pc(&self) -> usize {
+        self.pc
+    }
+
     fn last_pc(&self) -> usize {
         self.pc - 1
     }
@@ -552,7 +556,7 @@ impl<'p> Compiler<'p> {
 
     fn register_local_var(&mut self, name: String) -> usize {
         let ret = self.block.locals.register(name.clone());
-        self.proto.debug_locals.push(DebugLocalInfo::new(name, self.code.last_pc() + 1, 0));
+        self.proto.debug_locals.push(DebugLocalInfo::new(name, self.code.pc() + 1, 0));
         self.reg_top += 1;
         ret
     }
@@ -1213,7 +1217,7 @@ impl<'p> Compiler<'p> {
                     let assi_ctx = AssignContext::new(expr_ctx, reg, 0, keyks, false);
                     acs.push(assi_ctx);
                 }
-                _ => unreachable!("invalid left expression")
+                _ => unreachable!("invalid left expression:{:#?}", expr.inner())
             }
         };
 
@@ -1288,7 +1292,9 @@ impl<'p> Compiler<'p> {
     fn compile_assign_stmt(&mut self, lhs: &Vec<ExprNode>, rhs: &Vec<ExprNode>) {
         let lhslen = lhs.len();
         let (reg, acs) = self.compile_assign_stmt_left(lhs);
-        let (mut reg, acs) = self.compile_assign_stmt_right(reg, lhs, rhs, acs);
+        let (reg, acs) = self.compile_assign_stmt_right(reg, lhs, rhs, acs);
+        let mut reg = reg as i32;
+
         for j in 0..lhslen {
             let i = lhslen - 1 - j;
             let expr = &lhs[i];
@@ -1300,7 +1306,7 @@ impl<'p> Compiler<'p> {
                                 Some(i) => i as i32,
                                 None => -1
                             };
-                            self.code.add_ABC(OP_MOVE, index, reg as i32, 0, start_line(expr));
+                            self.code.add_ABC(OP_MOVE, index, reg, 0, start_line(expr));
                             reg -= 1;
                         } else {
                             unreachable!()
@@ -1310,7 +1316,7 @@ impl<'p> Compiler<'p> {
                 ExprScope::Global => {
                     if let Expr::Ident(ref s) = expr.inner() {
                         let index = self.const_index(Rc::new(Value::String(s.clone())));
-                        self.code.add_ABC(OP_MOVE, index as i32, reg as i32, 0, start_line(expr));
+                        self.code.add_ABC(OP_MOVE, index as i32, reg, 0, start_line(expr));
                         reg -= 1;
                     } else {
                         unreachable!()
@@ -1319,7 +1325,7 @@ impl<'p> Compiler<'p> {
                 ExprScope::Upval => {
                     if let Expr::Ident(ref s) = expr.inner() {
                         let index = self.upval.register_unique(s.clone());
-                        self.code.add_ABC(OP_MOVE, index as i32, reg as i32, 0, start_line(expr));
+                        self.code.add_ABC(OP_MOVE, index as i32, reg, 0, start_line(expr));
                         reg -= 1;
                     } else {
                         unreachable!()
@@ -1542,7 +1548,7 @@ impl<'p> Compiler<'p> {
         self.compile_block(&nfor.stmts);
         self.leave_block();
         let flpc = self.code.last_pc();
-        self.code.add_ASBx(OP_FORLOOP, rindex as i32, (bodypc - (flpc + 1)) as i32, startline);
+        self.code.add_ASBx(OP_FORLOOP, rindex as i32, bodypc as i32 - (flpc as i32 + 1), startline);
 
         let lastpc = self.code.last_pc();
         self.set_label_pc(endlabel, lastpc);
@@ -1636,6 +1642,10 @@ impl<'p> Compiler<'p> {
                 self.code.add_ASBx(OP_JMP, 0, label as i32, startline);
                 return;
             }
+            match blk.parent {
+                Some(ref parent) => blk = parent,
+                None => break
+            }
         }
         panic!("no loop to break: {}", startline);
     }
@@ -1674,7 +1684,7 @@ impl<'p> Compiler<'p> {
     }
 
     fn patchcode(&mut self) {
-        let mut maxreg = if self.proto.param_count > 1 { self.proto.param_count } else { 1 };
+        let mut maxreg = if self.proto.param_count > 1 { self.proto.param_count as i32 } else { 1 };
         let mut moven = 0;
         let mut pc = 0;
         let lastpc = self.code.pc;
@@ -1683,7 +1693,7 @@ impl<'p> Compiler<'p> {
             let curop = get_opcode(inst);
             match curop {
                 OP_CLOSURE => {
-                    pc += self.proto.prototypes[get_argbx(inst) as usize].upval_count as usize;
+                    pc += self.proto.prototypes[get_argbx(inst) as usize].upval_count as usize + 1;
                     moven = 0;
                     continue;
                 }
@@ -1691,25 +1701,25 @@ impl<'p> Compiler<'p> {
                 OP_TAILCALL | OP_RETURN | OP_FORPREP | OP_FORLOOP | OP_TFORLOOP |
                 OP_SETLIST | OP_CLOSE => {}
                 OP_CALL => {
-                    let reg = (get_arga(inst) + get_argb(inst) - 2) as u8;
+                    let reg = get_arga(inst) + get_argb(inst) - 2 ;
                     if reg > maxreg {
                         maxreg = reg;
                     }
                 }
                 OP_VARARG => {
-                    let reg = (get_arga(inst) + get_argb(inst) - 1) as u8;
+                    let reg = get_arga(inst) + get_argb(inst) - 1;
                     if reg > maxreg {
                         maxreg = reg;
                     }
                 }
                 OP_SELF => {
-                    let reg = (get_arga(inst) + 1) as u8;
+                    let reg = get_arga(inst) + 1;
                     if reg > maxreg {
                         maxreg = reg;
                     }
                 }
                 OP_LOADNIL => {
-                    let reg = get_argb(inst) as u8;
+                    let reg = get_argb(inst);
                     if reg > maxreg {
                         maxreg = reg;
                     }
@@ -1738,12 +1748,13 @@ impl<'p> Compiler<'p> {
                     }
                 }
                 _ => {
-                    let reg = get_arga(inst) as u8;
+                    let reg = get_arga(inst);
                     if reg > maxreg {
                         maxreg = reg;
                     }
                 }
             }
+            println!("{}, {}, {}", self.code.lines[pc], maxreg, to_string(inst));
             if curop == OP_MOVE {
                 moven += 1;
             } else {
@@ -1759,8 +1770,8 @@ impl<'p> Compiler<'p> {
         }
 
         maxreg += 1;
-        if maxreg > MAX_REGISTERS as u8 {
-            panic!("register overflow(too many local variables)")
+        if maxreg > MAX_REGISTERS {
+            panic!("<{}:{:?}> register overflow(too many local variables)", self.proto.source, self.proto.lineinfo)
         }
         self.proto.used_registers = maxreg as u8;
     }
@@ -1795,9 +1806,6 @@ impl<'p> Compiler<'p> {
         self.end_scope();
         let mut codestore = Instructions::new();
 
-        // TODO: thinking
-        self.patchcode();
-
         self.proto.code = self.code.list();
         self.proto.debug_pos = self.code.line_list();
         self.proto.debug_upval = self.upval.names();
@@ -1808,6 +1816,9 @@ impl<'p> Compiler<'p> {
             strv.push(sv);
         }
         self.proto.strings = strv;
+
+        // TODO: thinking
+        self.patchcode();
     }
 }
 
@@ -1819,5 +1830,4 @@ pub fn compile(stmts: Vec<StmtNode>, name: String) -> Result<Box<FunctionProto>>
     compiler.compile_func_expr(&par, &stmts, &ExprContext::with_opt(0), 0, 0);
     println!("{:#?}", compiler);
     Ok(compiler.proto)
-
 }
