@@ -393,7 +393,7 @@ impl Block {
     }
 
     fn endline(&self) -> u32 {
-        self.lineinfo.0
+        self.lineinfo.1
     }
 }
 
