@@ -556,7 +556,7 @@ impl<'p> Compiler<'p> {
 
     fn register_local_var(&mut self, name: String) -> usize {
         let ret = self.block.locals.register(name.clone());
-        self.proto.debug_locals.push(DebugLocalInfo::new(name, self.code.pc() + 1, 0));
+        self.proto.debug_locals.push(DebugLocalInfo::new(name, self.code.pc(), 0));
         self.reg_top += 1;
         ret
     }
