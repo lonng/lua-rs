@@ -38,7 +38,7 @@ struct ExprContext {
 }
 
 impl ExprContext {
-    pub fn new(scope: ExprScope, reg: usize, opt: i32) -> ExprContext {
+    fn new(scope: ExprScope, reg: usize, opt: i32) -> ExprContext {
         ExprContext {
             scope,
             reg,
@@ -46,17 +46,17 @@ impl ExprContext {
         }
     }
 
-    pub fn with_opt(opt: i32) -> ExprContext {
+    fn with_opt(opt: i32) -> ExprContext {
         ExprContext::new(ExprScope::None, REG_UNDEFINED, opt)
     }
 
-    pub fn update(&mut self, typ: ExprScope, reg: usize, opt: i32) {
+    fn update(&mut self, typ: ExprScope, reg: usize, opt: i32) {
         self.scope = typ;
         self.reg = reg;
         self.opt = opt;
     }
 
-    pub fn savereg(&self, reg: usize) -> usize {
+    fn savereg(&self, reg: usize) -> usize {
         if self.scope != ExprScope::Local || self.reg == REG_UNDEFINED {
             reg
         } else {
@@ -76,7 +76,7 @@ struct AssignContext {
 }
 
 impl AssignContext {
-    pub fn new(expr_ctx: ExprContext, keyrk: usize, valrk: usize, keyks: bool, nmove: bool) -> AssignContext {
+    fn new(expr_ctx: ExprContext, keyrk: usize, valrk: usize, keyks: bool, nmove: bool) -> AssignContext {
         AssignContext {
             expr_ctx,
             keyrk,
@@ -96,7 +96,7 @@ struct Lblabels {
 }
 
 impl Lblabels {
-    pub fn new(t: i32, f: i32, e: i32, b: bool) -> Lblabels {
+    fn new(t: i32, f: i32, e: i32, b: bool) -> Lblabels {
         Lblabels {
             t,
             f,
@@ -550,10 +550,6 @@ impl<'p> Compiler<'p> {
         self.reg_top
     }
 
-    fn set_reg_top(&mut self, top: usize) {
-        self.reg_top = top;
-    }
-
     fn register_local_var(&mut self, name: String) -> usize {
         let ret = self.block.locals.register(name.clone());
         self.proto.debug_locals.push(DebugLocalInfo::new(name, self.code.pc(), 0));
@@ -610,8 +606,7 @@ impl<'p> Compiler<'p> {
         let mut parent: Option<Box<Block>> = None; // swap replacement
         swap(&mut self.block.parent, &mut parent);
         self.block = parent.unwrap();
-        let top = self.block.locals.last_index();
-        self.set_reg_top(top);
+        self.reg_top = self.block.locals.last_index();
         closed
     }
 
@@ -1701,7 +1696,7 @@ impl<'p> Compiler<'p> {
                 OP_TAILCALL | OP_RETURN | OP_FORPREP | OP_FORLOOP | OP_TFORLOOP |
                 OP_SETLIST | OP_CLOSE => {}
                 OP_CALL => {
-                    let reg = get_arga(inst) + get_argb(inst) - 2 ;
+                    let reg = get_arga(inst) + get_argb(inst) - 2;
                     if reg > maxreg {
                         maxreg = reg;
                     }
