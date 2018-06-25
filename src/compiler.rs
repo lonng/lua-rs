@@ -1009,10 +1009,10 @@ impl<'p> Compiler<'p> {
                 reg += self.compile_expr(reg, rhs, &ExprContext::with_opt(0));
                 let mut pc = self.code.last_pc();
                 while pc != 0 && get_opcode(self.code.at(pc)) == OP_CONCAT {
-                    &mut self.code.pop();
+                    self.code.pop();
                     pc -= 1;
                 }
-                &mut self.code.add_ABC(OP_CONCAT, a as i32, basereg as i32, (basereg as i32 + crange), start_line(expr));
+                self.code.add_ABC(OP_CONCAT, a as i32, basereg as i32, (basereg as i32 + crange), start_line(expr));
             }
             Expr::BinaryOp(ref opr, ref lhs, ref rhs)
             if opr == &BinaryOpr::Eq ||
@@ -1098,10 +1098,7 @@ impl<'p> Compiler<'p> {
                         self.code.add_ABC(OP_GETUPVAL, svreg, index as i32, 0, start_line(expr));
                     }
                     ExprScope::Local => {
-                        let index = match self.find_local_var(s) {
-                            Some(i) => i as i32,
-                            None => -1
-                        };
+                        let index = self.find_local_var(s).unwrap() as i32;
                         self.code.add_ABC(OP_MOVE, svreg, index, 0, start_line(expr));
                     }
                     _ => unreachable!()
@@ -1247,9 +1244,7 @@ impl<'p> Compiler<'p> {
             let mut ac = acs[namesassigned];
             let mut nilexprs: Vec<ExprNode> = vec![];
             let expr = if namesassigned >= lenexprs {
-                let mut expr = ExprNode::new(Expr::Nil);
-                expr.set_line(start_line(&lhs[namesassigned]));
-                expr.set_last_line(end_line(&lhs[namesassigned]));
+                let mut expr = ExprNode::new(Expr::Nil, lhs[namesassigned].lineinfo());
                 nilexprs.push(expr);
                 &nilexprs[0]
             } else {
