@@ -3,14 +3,14 @@ use std::fmt::{Debug, Error, Formatter};
 /// Node represents a node in abstract syntax tree
 pub struct Node<T> {
     /// line info: (begin_line, end_line)
-    line: (u32, u32),
+    lineinfo: (u32, u32),
     inner: T,
 }
 
 impl<T> Node<T> {
-    pub fn new(inner: T) -> Node<T> {
+    pub fn new(inner: T, lineinfo: (u32, u32)) -> Node<T> {
         Node {
-            line: (0, 0),
+            lineinfo,
             inner,
         }
     }
@@ -18,16 +18,22 @@ impl<T> Node<T> {
     pub fn inner(&self) -> &T {
         &self.inner
     }
+    pub fn lineinfo(&self) -> (u32, u32) {
+        self.lineinfo
+    }
 
-    pub fn line(&self) -> u32 { self.line.0 }
-    pub fn set_line(&mut self, line: u32) { self.line.0 = line }
-    pub fn last_line(&self) -> u32 { self.line.1 }
-    pub fn set_last_line(&mut self, line: u32) { self.line.1 = line }
+    pub fn line(&self) -> u32 {
+        self.lineinfo.0
+    }
+
+    pub fn last_line(&self) -> u32 {
+        self.lineinfo.1
+    }
 }
 
 impl<T: Debug> Debug for Node<T> {
     fn fmt(&self, f: &mut Formatter) -> Result<(), Error> {
-        write!(f, "<{}:{}> {:#?}", self.line.0, self.line.1, self.inner)
+        write!(f, "<{}:{}> {:#?}", self.lineinfo.0, self.lineinfo.1, self.inner)
     }
 }
 

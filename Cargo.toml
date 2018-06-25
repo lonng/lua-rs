@@ -3,6 +3,10 @@ name = "lua"
 version = "0.1.0"
 authors = ["Chris Lonng <chris@lonng.org>"]
 
+[[bin]]
+name = "lua"
+path = "src/bin/lua.rs"
+
 [dependencies]
 bytes = "0.4"
 
