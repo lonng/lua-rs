@@ -147,12 +147,12 @@ impl<R: Read> Parser<R> {
             }
         };
         self.line_number = self.scanner.line_number();
-        //println!("<{}>: {} => {:?}", self.line_number, self.token);
+        println!("<{}>: => {:?}, {:?}", self.line_number, self.token, self.ahead_token);
         Ok(())
     }
 
     fn look_ahead(&mut self) -> Result<()> {
-        debug_assert!(&self.ahead_token == &Token::EOF);
+        //debug_assert!(self.ahead_token == Token::EOF);
         self.ahead_token = self.scanner.scan()?;
         Ok(())
     }
@@ -231,7 +231,14 @@ impl<R: Read> Parser<R> {
                 Field::new(Some(key), val)
             }
             Token::Ident(_) => {
-                let key = self.expression()?;
+                self.look_ahead()?;
+                let key = if self.ahead_token == Token::Char('=') {
+                    let s = if let Token::Ident(ref s) = self.token { s.clone() } else { unreachable!() };
+                    self.next()?;
+                    ExprNode::new(Expr::String(s.to_string()), (self.prev_number, self.prev_number))
+                } else {
+                    self.expression()?
+                };
                 if self.testnext(&Token::Char('='))? {
                     let val = self.expression()?;
                     Field::new(Some(key), val)
@@ -347,10 +354,10 @@ impl<R: Read> Parser<R> {
     }
 
     fn fnargs(&mut self) -> Result<Vec<ExprNode>> {
-        let line = self.line_number;
         let mut next = false;
         let expr = match self.token {
             Token::Char('(') => {
+                let line = self.line_number;
                 self.next()?;
                 let exprs = if self.token != Token::Char(')') {
                     self.exprlist()?
@@ -363,6 +370,7 @@ impl<R: Read> Parser<R> {
             }
             Token::Char('{') => vec![self.constructor()?],
             Token::String(ref s) => {
+                let line = self.prev_number;
                 next = true;
                 let mut expr = ExprNode::new(Expr::String(s.clone()), (line, line));
                 vec![expr]

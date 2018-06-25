@@ -272,7 +272,7 @@ impl Debug for Instructions {
     fn fmt(&self, f: &mut Formatter) -> StdResult<(), FmtError> {
         writeln!(f, "PC: <{}>", self.pc);
         for (i, inst) in self.insts.iter().enumerate() {
-            writeln!(f, "\t<{:04}:L{:04}> {}", i, self.lines[i], to_string(*inst));
+            writeln!(f, "<{:04}:L{:04}> {}", i, self.lines[i], to_string(*inst));
         }
         Ok(())
     }
@@ -687,14 +687,14 @@ impl<'p> Compiler<'p> {
                             reg += self.compile_expr(reg, &field.val, &ExprContext::with_opt(0))
                         }
                     }
-                    Some(ref expr) => {
+                    Some(ref key) => {
                         let regorg = reg;
                         let mut b = reg;
-                        self.compile_expr_with_KMV_propagation(expr, &mut reg, &mut b);
+                        self.compile_expr_with_KMV_propagation(&key, &mut reg, &mut b);
                         let mut c = reg;
-                        self.compile_expr_with_MV_propagation(expr, &mut reg, &mut c);
-                        let opcode = if let Expr::String(_) = expr.inner() { OP_SETTABLEKS } else { OP_SETTABLE };
-                        self.code.add_ABC(opcode, tablereg as i32, b as i32, c as i32, start_line(expr));
+                        self.compile_expr_with_KMV_propagation(&field.val, &mut reg, &mut c);
+                        let opcode = if let Expr::String(_) = key.inner() { OP_SETTABLEKS } else { OP_SETTABLE };
+                        self.code.add_ABC(opcode, tablereg as i32, b as i32, c as i32, start_line(key));
                         reg = regorg;
                     }
                 }
@@ -818,7 +818,7 @@ impl<'p> Compiler<'p> {
         let mut b = reg;
         self.compile_expr_with_KMV_propagation(lhs, &mut reg, &mut b);
         let mut c = reg;
-        self.compile_expr_with_MV_propagation(rhs, &mut reg, &mut c);
+        self.compile_expr_with_KMV_propagation(rhs, &mut reg, &mut c);
 
         let inst = match opr {
             BinaryOpr::Eq => ABC(OP_EQ, 0 ^ flip, b as i32, c as i32),
@@ -1063,8 +1063,8 @@ impl<'p> Compiler<'p> {
 
         // TODO: const value
         match expr.inner() {
-            &Expr::True => self.code.add_ABC(OP_LOADBOOL, 1, 0, 0, start_line(expr)),
-            &Expr::False => self.code.add_ABC(OP_LOADBOOL, 0, 0, 0, start_line(expr)),
+            &Expr::True => self.code.add_ABC(OP_LOADBOOL, svreg, 1, 0, start_line(expr)),
+            &Expr::False => self.code.add_ABC(OP_LOADBOOL, svreg, 0, 0, start_line(expr)),
             &Expr::Nil => self.code.add_ABC(OP_LOADNIL, svreg, svreg, 0, start_line(expr)),
             &Expr::Number(f) => {
                 let num = self.const_index(Rc::new(Value::Number(f)));
@@ -1306,7 +1306,7 @@ impl<'p> Compiler<'p> {
                 ExprScope::Global => {
                     if let Expr::Ident(ref s) = expr.inner() {
                         let index = self.const_index(Rc::new(Value::String(s.clone())));
-                        self.code.add_ABC(OP_MOVE, index as i32, reg, 0, start_line(expr));
+                        self.code.add_ABC(OP_SETGLOBAL, reg, index as i32, 0, start_line(expr));
                         reg -= 1;
                     } else {
                         unreachable!()
@@ -1315,7 +1315,7 @@ impl<'p> Compiler<'p> {
                 ExprScope::Upval => {
                     if let Expr::Ident(ref s) = expr.inner() {
                         let index = self.upval.register_unique(s.clone());
-                        self.code.add_ABC(OP_MOVE, index as i32, reg, 0, start_line(expr));
+                        self.code.add_ABC(OP_SETUPVAL, reg, index as i32, 0, start_line(expr));
                         reg -= 1;
                     } else {
                         unreachable!()
@@ -1744,7 +1744,7 @@ impl<'p> Compiler<'p> {
                     }
                 }
             }
-            println!("{}, {}, {}", self.code.lines[pc], maxreg, to_string(inst));
+            //println!("{}, {}, {}", self.code.lines[pc], maxreg, to_string(inst));
             if curop == OP_MOVE {
                 moven += 1;
             } else {
@@ -1807,6 +1807,9 @@ impl<'p> Compiler<'p> {
         }
         self.proto.strings = strv;
 
+        println!("==========================CODE========================");
+        println!("{:#?}", self.code);
+
         // TODO: thinking
         self.patchcode();
     }
@@ -1818,6 +1821,5 @@ pub fn compile(stmts: Vec<StmtNode>, name: String) -> Result<Box<FunctionProto>>
     let mut par = ParList::new();
     par.set_vargs(true);
     compiler.compile_func_expr(&par, &stmts, &ExprContext::with_opt(0), 0, 0);
-    println!("{:#?}", compiler);
     Ok(compiler.proto)
 }
