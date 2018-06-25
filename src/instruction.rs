@@ -226,7 +226,7 @@ pub fn get_arga(inst: Instruction) -> i32 {
 
 #[inline]
 pub fn set_arga(inst: &mut Instruction, a: i32) {
-    *inst = (*inst & 0xfc03ffff) | ((a as u32) & 0xff) << 18
+    *inst = (*inst & 0xfc03ffff) | ((a & 0xff) as u32) << 18
 }
 
 #[inline]
@@ -241,12 +241,12 @@ pub fn set_argb(inst: &mut Instruction, b: i32) {
 
 #[inline]
 pub fn get_argc(inst: Instruction) -> i32 {
-    ((inst >> 9) & 0xff) as i32
+    ((inst >> 9) & 0x1ff) as i32
 }
 
 #[inline]
 pub fn set_argc(inst: &mut Instruction, c: i32) {
-    *inst = (*inst & 0xfffc01ff) | ((c as u32) & 0x1ff) << 9
+    *inst = (*inst & 0xfffc01ff) | ((c & 0x1ff) as u32) << 9
 }
 
 #[inline]
@@ -322,7 +322,7 @@ pub fn to_string(inst: Instruction) -> String {
 
     let ops = match prop.typ {
         OpType::ABC => format!("{:10}| {:4} | {:4}, {:4}, {:4}", prop.name, prop.typ.to_string(), arga, argb, argc),
-        OpType::ABx => format!("{:10}| {:4} | {:4}, {:4}", prop.name, prop.typ.to_string(),arga, argbx),
+        OpType::ABx => format!("{:10}| {:4} | {:4}, {:4}", prop.name, prop.typ.to_string(), arga, argbx),
         OpType::ASBx => format!("{:10}| {:4} | {:4}, {:4}", prop.name, prop.typ.to_string(), arga, argsbx)
     };
 
