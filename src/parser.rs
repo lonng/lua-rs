@@ -446,14 +446,14 @@ impl<R: Read> Parser<R> {
     /// constructor | FUNCTION body | primaryexp
     /// ```
     fn simple_expr(&mut self) -> Result<ExprNode> {
-        let lineinfo = (self.prev_number, self.line_number);
+        let lineinfo = (self.line_number, self.line_number);
         let mut node = match self.token {
             Token::True => ExprNode::new(Expr::True, lineinfo),
             Token::False => ExprNode::new(Expr::False, lineinfo),
             Token::Nil => ExprNode::new(Expr::Nil, lineinfo),
             Token::Number(n) => ExprNode::new(Expr::Number(n), lineinfo),
             Token::Dots => ExprNode::new(Expr::Dots, lineinfo),
-            Token::String(ref s) => ExprNode::new(Expr::String(s.clone()), lineinfo),
+            Token::String(ref s) => ExprNode::new(Expr::String(s.clone()), (self.prev_number, self.line_number)),
             Token::Char(c) if c == '{' => return Ok(self.constructor()?),
             Token::Function => return Ok(self.function()?),
             _ => return Ok(self.primaryexp()?)
