@@ -355,12 +355,8 @@ impl<R: Read> Scanner<R> {
 
     fn read_string(&mut self) -> Result<Token> {
         let delimiter = self.current;
-        self.save_and_advance();
-        loop {
-            if self.current == delimiter {
-                break;
-            }
-
+        self.advance();
+        while self.current != delimiter {
             match self.current {
                 EOF | '\n' | '\r' => return Err(Error::LexicalError("unfinished string".to_string())),
                 '\\' => {
@@ -412,7 +408,7 @@ impl<R: Read> Scanner<R> {
             }
         }
 
-        self.save_and_advance();
+        self.advance();
         let ret = self.buf_string()?;
         self.buffer.clear();
         return Ok(Token::String(ret));
