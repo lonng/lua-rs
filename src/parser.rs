@@ -147,12 +147,12 @@ impl<R: Read> Parser<R> {
             }
         };
         self.line_number = self.scanner.line_number();
-        println!("<{}>: => {:?}, {:?}", self.line_number, self.token, self.ahead_token);
+        //println!("<{}>: => {:?}, {:?}", self.line_number, self.token, self.ahead_token);
         Ok(())
     }
 
     fn look_ahead(&mut self) -> Result<()> {
-        //debug_assert!(self.ahead_token == Token::EOF);
+        debug_assert!(self.ahead_token == Token::EOF);
         self.ahead_token = self.scanner.scan()?;
         Ok(())
     }
@@ -672,14 +672,13 @@ impl<R: Read> Parser<R> {
     fn localfunc(&mut self) -> Result<Stmt> {
         let line = self.line_number;
         let mut name = if let Token::Ident(ref s) = self.token {
-            Expr::Ident(s.clone())
+            s.clone()
         } else {
             return Err(self.unexpected(&self.token));
         };
         self.next()?;
-        let nameexpr = ExprNode::new(name, (line, self.prev_number));
         let body = self.funcbody()?;
-        let stmt = Stmt::FuncDef(FuncDef::new(nameexpr, body));
+        let stmt = Stmt::LocalAssign(vec![name], vec![body]);
         Ok(stmt)
     }
 

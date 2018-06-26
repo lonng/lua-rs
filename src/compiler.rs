@@ -5,6 +5,7 @@ use ast::*;
 use instruction::*;
 use std::borrow::BorrowMut;
 use std::collections::HashMap;
+use std::f64;
 use std::fmt::{Debug, Error as FmtError, Formatter};
 use std::mem::{replace, swap};
 use std::rc::Rc;
@@ -15,6 +16,14 @@ const MAX_REGISTERS: i32 = 200;
 const REG_UNDEFINED: usize = OPCODE_MAXA as usize;
 const LABEL_NO_JUMP: usize = 0;
 const FIELDS_PER_FLUSH: i32 = 50;
+
+fn lua_modulo(lhs: f64, rhs: f64) -> f64 {
+    let mut v = lhs % rhs;
+    if lhs < 0.0 || rhs < 0.0 && !(lhs < 0.0 && rhs < 0.0) {
+        v += rhs;
+    }
+    v
+}
 
 #[derive(Debug, Eq, PartialEq, Copy, Clone)]
 enum ExprScope {
@@ -735,7 +744,7 @@ impl<'p> Compiler<'p> {
 
         let (name, argc) = match expr.inner() {
             Expr::FuncCall(ref func) => {
-                reg += self.compile_expr(reg, &func.func, expr_ctx);
+                reg += self.compile_expr(reg, &func.func, &ExprContext::with_opt(0));
                 let len = func.args.len();
                 for (i, arg) in func.args.iter().enumerate() {
                     islastvargs = (i == len - 1) && arg.inner().is_vararg();
@@ -794,7 +803,7 @@ impl<'p> Compiler<'p> {
         let mut b = reg;
         self.compile_expr_with_KMV_propagation(lhs, &mut reg, &mut b);
         let mut c = reg;
-        self.compile_expr_with_MV_propagation(rhs, &mut reg, &mut c);
+        self.compile_expr_with_KMV_propagation(rhs, &mut reg, &mut c);
 
         let opcode = match opr {
             BinaryOpr::Add => OP_ADD,
@@ -985,7 +994,12 @@ impl<'p> Compiler<'p> {
                 opr == &BinaryOpr::Div ||
                 opr == &BinaryOpr::Mod ||
                 opr == &BinaryOpr::Pow => {
-                self.compile_binary_arith_expr(reg, *opr, lhs, rhs, expr_ctx, start_line(expr));
+                if let Some(e) = self.const_fold(expr) {
+                    let exprnode = ExprNode::new(e, expr.lineinfo());
+                    self.compile_expr(reg, &exprnode, expr_ctx);
+                } else {
+                    self.compile_binary_arith_expr(reg, *opr, lhs, rhs, expr_ctx, start_line(expr));
+                }
             }
             Expr::BinaryOp(BinaryOpr::Concat, ref lhs, ref rhs) => {
                 let mut crange = 1;
@@ -1042,7 +1056,14 @@ impl<'p> Compiler<'p> {
                 }
             }
             Expr::UnaryOp(UnaryOpr::Length, ref subexpr) => (OP_LEN, subexpr),
-            Expr::UnaryOp(UnaryOpr::Minus, ref subexpr) => (OP_UNM, subexpr),
+            Expr::UnaryOp(UnaryOpr::Minus, ref subexpr) => {
+                if let Some(e) = self.const_fold(expr) {
+                    let exprnode = ExprNode::new(e, expr.lineinfo());
+                    self.compile_expr(reg, &exprnode, expr_ctx);
+                    return;
+                }
+                (OP_UNM, subexpr)
+            },
             _ => unreachable!()
         };
 
@@ -1050,6 +1071,59 @@ impl<'p> Compiler<'p> {
         let mut b = reg;
         self.compile_expr_with_MV_propagation(operand, &mut reg, &mut b);
         self.code.add_ABC(opcode, a as i32, b as i32, 0, start_line(expr));
+    }
+
+    /// Attempts to constant fold (i.e. evaluate at compile time as an optimization) the given
+    /// operation on the two expressions.
+    /// Folding is attempted only on operations on numbers that are known constants
+    /// (e.g. `local x = 1+1` -> `local x = 2`).  Moreover, constant folding is skipped on
+    /// division (or modulo) by zero (resulting in not-a-number, NaN), which Lua 5.1 folded
+    /// but it caused problems so this folding was eliminated in Lua 5.2.
+    /// Returns 1 (not 0) if folding was possible.
+    /// --see http://lua-users.org/lists/lua-l/2007-02/msg00207.html.
+    fn const_fold(&mut self, expr: &ExprNode) -> Option<Expr> {
+        match expr.inner() {
+            Expr::UnaryOp(UnaryOpr::Minus, ref subexpr) => {
+                match self.const_fold(subexpr) {
+                    None => if let Expr::Number(n) = subexpr.inner() { Some(Expr::Number(-n)) } else { None }
+                    Some(sub) => {
+                        if let Expr::Number(n) = sub {
+                            Some(Expr::Number(-n))
+                        } else {
+                            unreachable!()
+                        }
+                    }
+                }
+            }
+            Expr::BinaryOp(ref opr, ref lhs, ref rhs)
+            if opr == &BinaryOpr::Add ||
+                opr == &BinaryOpr::Sub ||
+                opr == &BinaryOpr::Mul ||
+                opr == &BinaryOpr::Div ||
+                opr == &BinaryOpr::Mod ||
+                opr == &BinaryOpr::Pow => {
+                if let Expr::Number(l) = lhs.inner() {
+                    if let Expr::Number(r) = rhs.inner() {
+                        let v = match opr {
+                            &BinaryOpr::Add => { r + r }
+                            &BinaryOpr::Sub => { r - r }
+                            &BinaryOpr::Mul => { r * r }
+                            &BinaryOpr::Div => { r / r }
+                            &BinaryOpr::Mod => { lua_modulo(*l, *r) }
+                            &BinaryOpr::Pow => { l.powf(*r) }
+                            _ => unreachable!()
+                        };
+                        return Some(Expr::Number(v));
+                    }
+                }
+
+                // TODO: partial fold
+                let subl = Box::new(ExprNode::new(self.const_fold(lhs)?, lhs.lineinfo()));
+                let subr = Box::new(ExprNode::new(self.const_fold(rhs)?, lhs.lineinfo()));
+                Some(Expr::BinaryOp(*opr, subl, subr))
+            }
+            _ => None
+        }
     }
 
     fn compile_expr(&mut self, mut reg: usize, expr: &ExprNode, expr_ctx: &ExprContext) -> usize {
@@ -1109,14 +1183,18 @@ impl<'p> Compiler<'p> {
                 let opcode = if let &Expr::String(_) = key.inner() { OP_GETTABLEKS } else { OP_GETTABLE };
                 self.code.add_ABC(opcode, a, b as i32, c as i32, start_line(expr));
             }
-            &Expr::Table(_) => self.compile_table_expr(reg, expr, expr_ctx),
+            &Expr::Table(_) => {
+                self.compile_table_expr(reg, expr, expr_ctx);
+                // TODO: needs?
+                sused = 1;
+            },
             &Expr::FuncCall(_) | &Expr::MethodCall(_) => sused = self.compile_fncall_expr(reg, expr, expr_ctx),
             &Expr::BinaryOp(_, _, _) => self.compile_binaryop_expr(reg, expr, expr_ctx),
             &Expr::UnaryOp(_, _) => self.compile_unaryop_expr(reg, expr, expr_ctx),
             &Expr::Function(ref params, ref stmts) => {
                 let (proto, upvals) = {
                     let mut subcompiler = Compiler::new(self.proto.source.clone(), Some(self));
-                    subcompiler.compile_func_expr(params, stmts, expr_ctx, start_line(expr), end_line(expr));
+                    subcompiler.compile_func_expr(params, stmts, expr_ctx, expr.lineinfo());
                     let mut upval = VarRegistry::new(0);
                     swap(&mut subcompiler.upval, &mut upval);
                     (subcompiler.proto, upval)
@@ -1229,7 +1307,7 @@ impl<'p> Compiler<'p> {
                 for i in namesassigned..(namesassigned + incr) {
                     acs[i].nmove = true;
                     if acs[i].expr_ctx.scope == ExprScope::Table {
-                        acs[i].valrk = regstart + (1 - namesassigned);
+                        acs[i].valrk = regstart + (i - namesassigned);
                     }
                 }
                 namesassigned = lennames;
@@ -1367,6 +1445,7 @@ impl<'p> Compiler<'p> {
     fn compile_local_assign_stmt(&mut self, names: &Vec<String>, values: &Vec<ExprNode>, line: u32) {
         let reg = self.reg_top();
         if names.len() == 1 && values.len() == 1 {
+            //println!("==={:#?}", values);
             if let Expr::Function(ref params, ref stmts) = values[0].inner() {
                 self.register_local_var(names[0].clone());
                 self.compile_reg_assignment(names, values, reg, names.len(), line);
@@ -1768,8 +1847,9 @@ impl<'p> Compiler<'p> {
     }
 
     fn compile_func_expr(&mut self, params: &ParList, stmts: &Vec<StmtNode>,
-                         expr_ctx: &ExprContext, startline: u32, endline: u32) {
-        self.proto.lineinfo = (startline, endline);
+                         expr_ctx: &ExprContext, lineinfo: (u32, u32)) {
+        self.proto.lineinfo = lineinfo;
+        let endline = lineinfo.1;
         if params.names.len() > (MAX_REGISTERS as usize) {
             panic!("register overflow")
         }
@@ -1812,8 +1892,10 @@ impl<'p> Compiler<'p> {
         if self.parent.is_none() {
             //println!("==========================CODE========================");
             //println!("{:#?}", stmts);
-            println!("==========================CODE========================");
-            println!("{:#?}", self.proto.constants);
+            println!("==========================CONST========================");
+            for (i, v) in self.proto.constants.iter().enumerate() {
+                println!("{:4} => {:?}", i, v);
+            }
             println!("==========================CODE========================");
             println!("{:#?}", self.code);
         }
@@ -1827,6 +1909,7 @@ pub fn compile(stmts: Vec<StmtNode>, name: String) -> Result<Box<FunctionProto>>
     let mut compiler = Compiler::new(name, None);
     let mut par = ParList::new();
     par.set_vargs(true);
-    compiler.compile_func_expr(&par, &stmts, &ExprContext::with_opt(0), 0, 0);
+    let lineinfo = if stmts.len() > 0 { (start_line(&stmts[0]), end_line(&stmts[stmts.len() - 1])) } else { (1, 1) };
+    compiler.compile_func_expr(&par, &stmts, &ExprContext::with_opt(0), lineinfo);
     Ok(compiler.proto)
 }
