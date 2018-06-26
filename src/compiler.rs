@@ -65,7 +65,7 @@ impl ExprContext {
     }
 }
 
-#[derive(Debug, Eq, PartialEq, Copy, Clone)]
+#[derive(Debug, Eq, PartialEq)]
 struct AssignContext {
     expr_ctx: ExprContext,
     keyrk: usize,
@@ -612,11 +612,7 @@ impl<'p> Compiler<'p> {
 
     fn compile_chunk(&mut self, chunk: &Vec<StmtNode>) {
         for stmt in chunk.iter() {
-            println!("===============================");
-            println!("{:#?}", stmt);
             self.compile_stmt(stmt);
-            println!("===============================");
-            println!("{:#?}", self);
         }
     }
 
@@ -1204,9 +1200,9 @@ impl<'p> Compiler<'p> {
                 &Expr::AttrGet(ref obj, ref key) => {
                     let mut expr_ctx = ExprContext::new(ExprScope::Table, REG_UNDEFINED, 0);
                     self.compile_expr_with_KMV_propagation(obj, &mut reg, &mut expr_ctx.reg);
-                    reg += self.compile_expr(reg, key, &ExprContext::with_opt(0));
                     let keyks = if let Expr::String(_) = key.inner() { true } else { false };
-                    let assi_ctx = AssignContext::new(expr_ctx, reg, 0, keyks, false);
+                    let mut assi_ctx = AssignContext::new(expr_ctx, 0, 0, keyks, false);
+                    self.compile_expr_with_KMV_propagation(key, &mut reg, &mut assi_ctx.keyrk);
                     acs.push(assi_ctx);
                 }
                 _ => unreachable!("invalid left expression:{:#?}", expr.inner())
@@ -1241,7 +1237,7 @@ impl<'p> Compiler<'p> {
             }
 
             // regular assignment
-            let mut ac = acs[namesassigned];
+            let mut ac = &mut acs[namesassigned];
             let mut nilexprs: Vec<ExprNode> = vec![];
             let expr = if namesassigned >= lenexprs {
                 let mut expr = ExprNode::new(Expr::Nil, lhs[namesassigned].lineinfo());
@@ -1256,12 +1252,12 @@ impl<'p> Compiler<'p> {
             if ac.expr_ctx.scope == ExprScope::Table {
                 match expr.inner() {
                     Expr::BinaryOp(BinaryOpr::And, _, _) | Expr::BinaryOp(BinaryOpr::Or, _, _) => {
-                        let regtop = self.reg_top();
-                        self.code.propagate_KMV(regtop, &mut ac.valrk, &mut reg, incr, true);
-                    }
-                    _ => {
                         ac.valrk = idx;
                         reg += incr;
+                    }
+                    _ => {
+                        let regtop = self.reg_top();
+                        self.code.propagate_KMV(regtop, &mut ac.valrk, &mut reg, incr, true);
                     }
                 }
             } else {
@@ -1535,7 +1531,12 @@ impl<'p> Compiler<'p> {
         self.register_local_var(nfor.name.clone());
 
         let bodypc = self.code.last_pc();
-        self.compile_block(&nfor.stmts);
+
+        println!("-----------------++++++++++++---------------------");
+        println!("{:#?}", &nfor.stmts);
+        println!("-----------------++++++++++++---------------------");
+        self.compile_chunk(&nfor.stmts);
+
         self.leave_block();
         let flpc = self.code.last_pc();
         self.code.add_ASBx(OP_FORLOOP, rindex as i32, bodypc as i32 - (flpc as i32 + 1), startline);
@@ -1807,9 +1808,15 @@ impl<'p> Compiler<'p> {
         }
         self.proto.strings = strv;
 
-        println!("==========================CODE========================");
-        println!("{:#?}", self.code);
 
+        if self.parent.is_none() {
+            //println!("==========================CODE========================");
+            //println!("{:#?}", stmts);
+            println!("==========================CODE========================");
+            println!("{:#?}", self.proto.constants);
+            println!("==========================CODE========================");
+            println!("{:#?}", self.code);
+        }
         // TODO: thinking
         self.patchcode();
     }
