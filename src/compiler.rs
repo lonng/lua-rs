@@ -1446,7 +1446,6 @@ impl<'p> Compiler<'p> {
     fn compile_local_assign_stmt(&mut self, names: &Vec<String>, values: &Vec<ExprNode>, line: u32) {
         let reg = self.reg_top();
         if names.len() == 1 && values.len() == 1 {
-            //println!("==={:#?}", values);
             if let Expr::Function(ref params, ref stmts) = values[0].inner() {
                 self.register_local_var(names[0].clone());
                 self.compile_reg_assignment(names, values, reg, names.len(), line);
@@ -1824,7 +1823,6 @@ impl<'p> Compiler<'p> {
                     }
                 }
             }
-            //println!("{}, {}, {}", self.code.lines[pc], maxreg, to_string(inst));
             if curop == OP_MOVE {
                 moven += 1;
             } else {
@@ -1887,27 +1885,11 @@ impl<'p> Compiler<'p> {
             strv.push(sv);
         }
         self.proto.strings = strv;
-
-        // TODO: thinking
         self.patchcode();
-
-        if self.parent.is_none() {
-            println!("==========================CODE========================");
-            println!("{:#?}", stmts);
-            println!("==========================CONST========================");
-            for (i, v) in self.proto.constants.iter().enumerate() {
-                println!("{:4} => {:?}", i, v);
-            }
-            println!("==========================CODE========================");
-            println!("{:#?}", self.code);
-//            println!("{:#?}", self.proto.constants[619]);
-//            println!("{:#?}", self.proto.constants[107]);
-        }
     }
 }
 
 pub fn compile(stmts: Vec<StmtNode>, name: String) -> Result<Box<FunctionProto>> {
-    //println!("{:#?}", stmts);
     let mut compiler = Compiler::new(name, None);
     let mut par = ParList::new();
     par.set_vargs(true);

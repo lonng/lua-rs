@@ -1,4 +1,4 @@
-Lua compiler and VM implementation in pure Rust
+Lua compiler implementation in pure Rust
 
 ## WIP
 

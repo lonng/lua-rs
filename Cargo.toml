@@ -5,7 +5,7 @@ authors = ["Chris Lonng <chris@lonng.org>"]
 
 [[bin]]
 name = "lua"
-path = "src/bin/lua.rs"
+path = "src/bin/luac.rs"
 
 [dependencies]
 bytes = "0.4"
