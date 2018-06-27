@@ -370,7 +370,7 @@ pub fn to_string(inst: Instruction) -> String {
         OP_CLOSE => format!("{} | close all variables in the stack up to (>=) R({})", ops, arga),
         OP_CLOSURE => format!("{} | R({}) := closure(KPROTO[{}] R({}) ... R({}+n))", ops, arga, argbx, arga, arga),
         OP_VARARG => format!("{} |  R({}) R({}+1) ... R({}+{}-1) = vararg", ops, arga, arga, arga, argb),
-        OP_NOP => String::new(),
+        OP_NOP => format!("{}", ops),
         _ => unreachable!()
     }
 }

@@ -870,7 +870,7 @@ impl<'p> Compiler<'p> {
                 }
             }
             &Expr::True => {
-                if elselabel == lb.e {
+                if thenlabel == lb.e {
                     self.code.add_ASBx(OP_JMP, 0, lb.t, start_line(expr));
                     lb.b = true;
                 } else {
@@ -1105,10 +1105,10 @@ impl<'p> Compiler<'p> {
                 if let Expr::Number(l) = lhs.inner() {
                     if let Expr::Number(r) = rhs.inner() {
                         let v = match opr {
-                            &BinaryOpr::Add => { r + r }
-                            &BinaryOpr::Sub => { r - r }
-                            &BinaryOpr::Mul => { r * r }
-                            &BinaryOpr::Div => { r / r }
+                            &BinaryOpr::Add => { l + r }
+                            &BinaryOpr::Sub => { l - r }
+                            &BinaryOpr::Mul => { l * r }
+                            &BinaryOpr::Div => { l / r }
                             &BinaryOpr::Mod => { lua_modulo(*l, *r) }
                             &BinaryOpr::Pow => { l.powf(*r) }
                             _ => unreachable!()
@@ -1299,7 +1299,7 @@ impl<'p> Compiler<'p> {
         let mut namesassigned = 0;
         while namesassigned < lennames {
             // multiple assign with vararg function
-            if rhs[namesassigned].inner().is_vararg() && (lenexprs - namesassigned - 1) <= 0 {
+            if namesassigned < rhs.len() && rhs[namesassigned].inner().is_vararg() && (lenexprs - namesassigned - 1) <= 0 {
                 let opt = lennames - namesassigned - 1;
                 let regstart = reg;
                 let incr = self.compile_expr(reg, &rhs[namesassigned], &ExprContext::with_opt(opt as i32));
@@ -1380,7 +1380,7 @@ impl<'p> Compiler<'p> {
                 ExprScope::Global => {
                     if let Expr::Ident(ref s) = expr.inner() {
                         let index = self.const_index(Rc::new(Value::String(s.clone())));
-                        self.code.add_ABC(OP_SETGLOBAL, reg, index as i32, 0, start_line(expr));
+                        self.code.add_ABx(OP_SETGLOBAL, reg, index as i32,  start_line(expr));
                         reg -= 1;
                     } else {
                         unreachable!()
@@ -1398,7 +1398,7 @@ impl<'p> Compiler<'p> {
                 ExprScope::Table => {
                     let opcode = if acs[i].keyks { OP_SETTABLEKS } else { OP_SETTABLE };
                     self.code.add_ABC(opcode, acs[i].expr_ctx.reg as i32, acs[i].keyrk as i32, acs[i].valrk as i32, start_line(expr));
-                    if is_k(acs[i].valrk as i32) {
+                    if !is_k(acs[i].valrk as i32) {
                         reg -= 1;
                     }
                 }
@@ -1473,6 +1473,10 @@ impl<'p> Compiler<'p> {
                 if !hasnextcond {
                     return;
                 }
+            }
+            &Expr::UnaryOp(UnaryOpr::Not, ref ex) => {
+                self.compile_branch_condition(reg, ex, elselabel, thenlabel, !hasnextcond);
+                return;
             }
             &Expr::BinaryOp(BinaryOpr::And, ref lhs, ref rhs) => {
                 let nextcondlabel = self.new_label();
@@ -1610,12 +1614,7 @@ impl<'p> Compiler<'p> {
         self.register_local_var(nfor.name.clone());
 
         let bodypc = self.code.last_pc();
-
-        println!("-----------------++++++++++++---------------------");
-        println!("{:#?}", &nfor.stmts);
-        println!("-----------------++++++++++++---------------------");
         self.compile_chunk(&nfor.stmts);
-
         self.leave_block();
         let flpc = self.code.last_pc();
         self.code.add_ASBx(OP_FORLOOP, rindex as i32, bodypc as i32 - (flpc as i32 + 1), startline);
@@ -1888,19 +1887,21 @@ impl<'p> Compiler<'p> {
         }
         self.proto.strings = strv;
 
-
-        if self.parent.is_none() {
-            //println!("==========================CODE========================");
-            //println!("{:#?}", stmts);
-            println!("==========================CONST========================");
-            for (i, v) in self.proto.constants.iter().enumerate() {
-                println!("{:4} => {:?}", i, v);
-            }
-            println!("==========================CODE========================");
-            println!("{:#?}", self.code);
-        }
         // TODO: thinking
         self.patchcode();
+
+        if self.parent.is_none() {
+//            println!("==========================CODE========================");
+//            println!("{:#?}", stmts);
+//            println!("==========================CONST========================");
+//            for (i, v) in self.proto.constants.iter().enumerate() {
+//                println!("{:4} => {:?}", i, v);
+//            }
+            println!("==========================CODE========================");
+            println!("{:#?}", self.code);
+//            println!("{:#?}", self.proto.constants[619]);
+//            println!("{:#?}", self.proto.constants[107]);
+        }
     }
 }
 
