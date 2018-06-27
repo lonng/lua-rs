@@ -8,8 +8,8 @@ This project is being completed. If you are interested, welcome to contribute co
 | --           | --                | --           | --                      |
 |  Scanner     | √                 | ×            |    √                    |
 |  Parser      | √                 | ×            |    √                    |
-|  Instruction | √                 | ×            |    ×                    |
-|  Compiler    | √                 | ×            |    ×                    |
+|  Instruction | √                 | ×            |    √                    |
+|  Compiler    | √                 | ×            |    √                    |
 |  VM          | working           | ×            |    ×                    |
 |  dump/undump | ×                 | ×            |    ×                    |
 |  stdlibs     | ×                 | ×            |    ×                    |
