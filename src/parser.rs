@@ -343,7 +343,11 @@ impl<R: Read> Parser<R> {
             Token::Char('(') => {
                 self.next()?;
                 let line = self.line_number;
-                let expr = self.expression()?;
+                let mut expr = self.expression()?;
+                match expr.inner_mut() {
+                    Expr::FuncCall(ref mut call) => call.adj = true,
+                    _ => {}
+                }
                 self.check(Token::Char(')'))?;
                 expr
             }

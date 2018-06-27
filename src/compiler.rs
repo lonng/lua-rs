@@ -1122,6 +1122,7 @@ impl<'p> Compiler<'p> {
                 let subr = Box::new(ExprNode::new(self.const_fold(rhs)?, lhs.lineinfo()));
                 Some(Expr::BinaryOp(*opr, subl, subr))
             }
+            Expr::Number(n) => Some(Expr::Number(*n)),
             _ => None
         }
     }
@@ -1891,12 +1892,12 @@ impl<'p> Compiler<'p> {
         self.patchcode();
 
         if self.parent.is_none() {
-//            println!("==========================CODE========================");
-//            println!("{:#?}", stmts);
-//            println!("==========================CONST========================");
-//            for (i, v) in self.proto.constants.iter().enumerate() {
-//                println!("{:4} => {:?}", i, v);
-//            }
+            println!("==========================CODE========================");
+            println!("{:#?}", stmts);
+            println!("==========================CONST========================");
+            for (i, v) in self.proto.constants.iter().enumerate() {
+                println!("{:4} => {:?}", i, v);
+            }
             println!("==========================CODE========================");
             println!("{:#?}", self.code);
 //            println!("{:#?}", self.proto.constants[619]);
