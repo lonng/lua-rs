@@ -10,9 +10,6 @@ This project is being completed. If you are interested, welcome to contribute co
 |  Parser      | √                 | ×            |    √                    |
 |  Instruction | √                 | ×            |    √                    |
 |  Compiler    | √                 | ×            |    √                    |
-|  VM          | working           | ×            |    ×                    |
-|  dump/undump | ×                 | ×            |    ×                    |
-|  stdlibs     | ×                 | ×            |    ×                    |
 
 ## LICENSE
 MIT LICENSE
