@@ -18,6 +18,11 @@ impl<T> Node<T> {
     pub fn inner(&self) -> &T {
         &self.inner
     }
+
+    pub fn inner_mut(&mut self) -> &mut T {
+        &mut self.inner
+    }
+
     pub fn lineinfo(&self) -> (u32, u32) {
         self.lineinfo
     }
@@ -94,7 +99,8 @@ pub enum Expr {
 impl Expr {
     pub fn is_vararg(&self) -> bool {
         match self {
-            &Expr::Dots | &Expr::FuncCall(_) => true,
+            &Expr::Dots => true,
+            &Expr::FuncCall(ref call) => !call.adj,
             _ => false,
         }
     }
@@ -191,6 +197,7 @@ impl MethodCall {
 pub struct FuncCall {
     pub func: ExprNode,
     pub args: Vec<ExprNode>,
+    pub adj: bool,
 }
 
 impl FuncCall {
@@ -198,6 +205,7 @@ impl FuncCall {
         FuncCall {
             func,
             args,
+            adj: false,
         }
     }
 }
