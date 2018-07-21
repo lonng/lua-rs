@@ -594,7 +594,7 @@ impl<R: Read> Scanner<R> {
     ///
     /// ```
     /// /* terminal symbols denoted by reserved words */
-    /// "and", "break", "do", "else", "elseif",
+    /// ["and", "break", "do", "else", "elseif",
     /// "end", "false", "for", "function", "if",
     /// "in", "local", "nil", "not", "or", "repeat",
     /// "return", "then", "true", "until", "while",
