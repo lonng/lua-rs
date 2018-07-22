@@ -243,8 +243,10 @@ impl<R: Read> Scanner<R> {
             Ok(ref buf) if buf.len() > 0 => {
                 buf[0] as char
             }
-            _ => EOF
+            _ => EOF,
         };
+
+        println!("Advanced: {}", c);
 
         if c != EOF {
             self.reader.consume(1)
@@ -638,6 +640,8 @@ impl<R: Read> Scanner<R> {
 
 #[cfg(test)]
 mod tests {
+    use std::io::{Read, Write};
+
     use super::*;
 
     #[test]
@@ -682,6 +686,7 @@ mod tests {
             assert_eq!(t.to_string(), exp.to_string());
         }
     }
+
     #[test]
     fn is_fns() {
         assert!(is_new_line('\r'));
@@ -701,6 +706,31 @@ mod tests {
         assert!(is_hexadecimal('F'));
         assert!(!is_hexadecimal('x'));
         assert!(!is_hexadecimal('X'));
+    }
+
+    #[test]
+    fn scan() {
+        let buf = b"x>=y\nx = 5";
+
+        let mut scanner = Scanner::new(BufReader::new(&buf[..]));
+
+        let res = scanner.scan();
+        assert!(res.is_ok());
+        println!("res: {:?}", res);
+        assert_eq!(res.unwrap(), Token::Ident("x".to_string()));
+
+        let res = scanner.scan();
+        assert!(res.is_ok());
+        assert_eq!(res.unwrap(), Token::GE);
+
+        let res = scanner.scan();
+        assert!(res.is_ok());
+        assert_eq!(res.unwrap(), Token::Ident("y".to_string()));
+
+        assert_eq!(scanner.line_number(), 1);
+
+        let res = scanner.scan();
+        assert_eq!(scanner.line_number(), 2);
     }
 }
 
