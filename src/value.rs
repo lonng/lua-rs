@@ -1,3 +1,5 @@
+#[allow(dead_code)]
+
 #[derive(Debug, PartialEq)]
 pub enum Value {
     Nil,

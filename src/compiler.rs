@@ -1,13 +1,14 @@
 #![allow(non_snake_case)]
+#![allow(dead_code)]
+#![allow(unused_variables)]
 
-use ::{Error, Result};
+use ::Result;
 use ast::*;
 use instruction::*;
-use std::borrow::BorrowMut;
 use std::collections::HashMap;
 use std::f64;
 use std::fmt::{Debug, Error as FmtError, Formatter};
-use std::mem::{replace, swap};
+use std::mem::swap;
 use std::rc::Rc;
 use std::result::Result as StdResult;
 use value::*;
@@ -279,9 +280,9 @@ impl Instructions {
 
 impl Debug for Instructions {
     fn fmt(&self, f: &mut Formatter) -> StdResult<(), FmtError> {
-        writeln!(f, "PC: <{}>", self.pc);
+        writeln!(f, "PC: <{}>", self.pc)?;
         for (i, inst) in self.insts.iter().enumerate() {
-            writeln!(f, "<{:04}:L{:04}> {}", i, self.lines[i], to_string(*inst));
+            writeln!(f, "<{:04}:L{:04}> {}", i, self.lines[i], to_string(*inst))?;
         }
         Ok(())
     }
@@ -659,11 +660,11 @@ impl<'p> Compiler<'p> {
     }
 
     fn load_rk(&mut self, reg: &mut usize, expr: &ExprNode, cnst: Rc<Value>) -> i32 {
-        let mut cindex = self.const_index(cnst) as i32;
+        let cindex = self.const_index(cnst) as i32;
         if cindex < opMaxIndexRk {
             rk_ask(cindex)
         } else {
-            let mut ret = *reg;
+            let ret = *reg;
             *reg += 1;
             self.code.add_ABx(OP_LOADK, ret as i32, cindex, start_line(expr));
             ret as i32
@@ -838,7 +839,7 @@ impl<'p> Compiler<'p> {
         self.code.add_ASBx(OP_JMP, 0, jumplabel, line);
     }
 
-    fn compile_binary_rel_expr(&mut self, mut reg: usize,
+    fn compile_binary_rel_expr(&mut self, reg: usize,
                                opr: BinaryOpr, lhs: &ExprNode, rhs: &ExprNode,
                                expr_ctx: &ExprContext, line: u32) {
         let a = expr_ctx.savereg(reg);
@@ -945,7 +946,7 @@ impl<'p> Compiler<'p> {
         }
     }
 
-    fn compile_binary_log_expr(&mut self, mut reg: usize,
+    fn compile_binary_log_expr(&mut self, reg: usize,
                                opr: BinaryOpr, lhs: &ExprNode, rhs: &ExprNode,
                                expr_ctx: &ExprContext, line: u32) {
         let a = expr_ctx.savereg(reg);
@@ -1022,7 +1023,7 @@ impl<'p> Compiler<'p> {
                     self.code.pop();
                     pc -= 1;
                 }
-                self.code.add_ABC(OP_CONCAT, a as i32, basereg as i32, (basereg as i32 + crange), start_line(expr));
+                self.code.add_ABC(OP_CONCAT, a as i32, basereg as i32, basereg as i32 + crange, start_line(expr));
             }
             Expr::BinaryOp(ref opr, ref lhs, ref rhs)
             if opr == &BinaryOpr::Eq ||
@@ -1316,7 +1317,7 @@ impl<'p> Compiler<'p> {
             }
 
             // regular assignment
-            let mut ac = &mut acs[namesassigned];
+            let ac = &mut acs[namesassigned];
             let mut nilexprs: Vec<ExprNode> = vec![];
             let expr = if namesassigned >= lenexprs {
                 let mut expr = ExprNode::new(Expr::Nil, lhs[namesassigned].lineinfo());
@@ -1873,7 +1874,7 @@ impl<'p> Compiler<'p> {
 
         self.code.add_ABC(OP_RETURN, 0, 1, 0, endline);
         self.end_scope();
-        let mut codestore = Instructions::new();
+        let codestore = Instructions::new();
 
         self.proto.code = self.code.list();
         self.proto.debug_pos = self.code.line_list();

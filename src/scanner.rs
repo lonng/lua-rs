@@ -1,9 +1,7 @@
 use ::{Error, Result};
 use bytes::{BufMut, BytesMut};
-use state::State;
 use std::f64;
 use std::io::{BufRead, BufReader, Read};
-use std::mem;
 use std::u8;
 
 /// END_OF_STREAM indicates that scanner has reach the end of stream.
@@ -235,7 +233,6 @@ impl<R: Read> Scanner<R> {
                 }
             }
         }
-        unreachable!()
     }
 
     fn advance(&mut self) {
@@ -350,7 +347,6 @@ impl<R: Read> Scanner<R> {
                 }
             }
         }
-        unreachable!()
     }
 
     fn read_string(&mut self) -> Result<Token> {
@@ -363,17 +359,17 @@ impl<R: Read> Scanner<R> {
                     self.advance();
                     let current = self.current;
                     match current {
-                        /// Escape charactors
-                        /// \a   U+0007 alert or bell
-                        /// \b   U+0008 backspace
-                        /// \f   U+000C form feed
-                        /// \n   U+000A line feed or newline
-                        /// \r   U+000D carriage return
-                        /// \t   U+0009 horizontal tab
-                        /// \v   U+000b vertical tab
-                        /// \\   U+005c backslash
-                        /// \'   U+0027 single quote  (valid escape only within rune literals)
-                        /// \"   U+0022 double quote  (valid escape only within string literals)
+                        // Escape charactors
+                        // \a   U+0007 alert or bell
+                        // \b   U+0008 backspace
+                        // \f   U+000C form feed
+                        // \n   U+000A line feed or newline
+                        // \r   U+000D carriage return
+                        // \t   U+0009 horizontal tab
+                        // \v   U+000b vertical tab
+                        // \\   U+005c backslash
+                        // \'   U+0027 single quote  (valid escape only within rune literals)
+                        // \"   U+0022 double quote  (valid escape only within string literals)
                         'a' => self.advance_and_save('\u{0007}'),
                         'b' => self.advance_and_save('\u{0008}'),
                         'f' => self.advance_and_save('\u{000C}'),
@@ -470,7 +466,7 @@ impl<R: Read> Scanner<R> {
             if i > 2 || !is_decimal(c) {
                 break;
             }
-            let mut cvalue = c as u32;
+            let cvalue = c as u32;
             r = r * 10 + (cvalue - ('0' as u32));
             self.advance();
             c = self.current;
@@ -512,7 +508,7 @@ impl<R: Read> Scanner<R> {
             self.buffer.clear();
 
             let mut exponent: isize = 0;
-            let (mut fraction, mut latest_char, mut count) = self.read_hexadecimal(0.0);
+            let (mut fraction, mut latest_char, count) = self.read_hexadecimal(0.0);
 
             if latest_char == '.' {
                 self.advance();

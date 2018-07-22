@@ -1,10 +1,9 @@
+#![allow(unused_variables)]
+
 use {parser, undump};
-use ::{Error, Result};
+use ::Result;
 use std::fs::File;
 use std::io::{BufRead, BufReader, Cursor, Read};
-use std::io;
-use std::result;
-use std::string;
 use compiler;
 
 /// A State is an opaque structure representing per thread Lua state.
@@ -27,13 +26,13 @@ impl State {
 
     pub fn load_file(&mut self, path: &str) -> Result<()> {
         let f = File::open(path)?;
-        let mut reader = BufReader::new(f);
+        let reader = BufReader::new(f);
         self.load(reader, path)
     }
 
     pub fn load_string(&mut self, s: &str) -> Result<()> {
         let cursor = Cursor::new(s.as_bytes());
-        let mut reader = BufReader::new(cursor);
+        let reader = BufReader::new(cursor);
         self.load(reader, "<string>")
     }
 

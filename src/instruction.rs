@@ -1,7 +1,5 @@
 #![allow(non_snake_case)]
-#![allow(non_snake_case_globals)]
-
-use std::fmt::Display;
+#![allow(non_upper_case_globals)]
 
 pub const INVALID_INSTRUCTION: u32 = 0xFFFFFFFF;
 
