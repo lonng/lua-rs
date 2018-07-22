@@ -100,7 +100,7 @@ fn is_decimal(c: char) -> bool {
 }
 
 fn is_hexadecimal(c: char) -> bool {
-    ('0' <= c && c <= '9') || ('a' <= c && c <= 'z') || ('A' <= c && c <= 'Z')
+    ('0' <= c && c <= '9') || ('a' <= c && c <= 'f') || ('A' <= c && c <= 'F')
 }
 
 #[derive(Debug)]
@@ -635,3 +635,72 @@ impl<R: Read> Scanner<R> {
         Ok(t)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn to_string() {
+        let tests = [
+            (Token::And, "and"),
+            (Token::Break, "break"),
+            (Token::Do, "do"),
+            (Token::Else, "else"),
+            (Token::Elseif, "elseif"),
+            (Token::End, "end"),
+            (Token::False, "false"),
+            (Token::For, "for"),
+            (Token::Function, "function"),
+            (Token::If, "if"),
+            (Token::In, "in"),
+            (Token::Local, "local"),
+            (Token::Nil, "nil"),
+            (Token::Not, "not"),
+            (Token::Or, "or"),
+            (Token::Repeat, "repeat"),
+            (Token::Return, "return"),
+            (Token::Then, "then"),
+            (Token::True, "true"),
+            (Token::Until, "until"),
+            (Token::While, "while"),
+            (Token::Concat, ".."),
+            (Token::Dots, "..."),
+            (Token::Eq, "=="),
+            (Token::GE, ">="),
+            (Token::LE, "<="),
+            (Token::NE, "~="),
+            (Token::EOF, "<eof>"),
+            (Token::Number(1.0), "1"),
+            (Token::Number(1.2), "1.2"),
+            (Token::Ident("example".to_string()), "example"),
+            (Token::String("example".to_string()), "example"),
+            (Token::Char('e'), "e"),
+        ];
+
+        for (t, exp) in tests.iter() {
+            assert_eq!(t.to_string(), exp.to_string());
+        }
+    }
+    #[test]
+    fn is_fns() {
+        assert!(is_new_line('\r'));
+        assert!(is_new_line('\n'));
+        assert!(!is_new_line('x'));
+
+        assert!(is_decimal('0'));
+        assert!(is_decimal('1'));
+        assert!(is_decimal('9'));
+        assert!(!is_decimal('x'));
+
+        assert!(is_hexadecimal('0'));
+        assert!(is_hexadecimal('1'));
+        assert!(is_hexadecimal('a'));
+        assert!(is_hexadecimal('f'));
+        assert!(is_hexadecimal('A'));
+        assert!(is_hexadecimal('F'));
+        assert!(!is_hexadecimal('x'));
+        assert!(!is_hexadecimal('X'));
+    }
+}
+
