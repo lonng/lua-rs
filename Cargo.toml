@@ -2,13 +2,14 @@
 name = "lua"
 version = "0.1.0"
 authors = ["Chris Lonng <chris@lonng.org>"]
+edition = "2018"
 
 [[bin]]
 name = "lua"
 path = "src/bin/luac.rs"
 
 [dependencies]
-bytes = "0.4"
+bytes = "0.5"
 
 # The development profile, used for `cargo build`.
 [profile.dev]

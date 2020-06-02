@@ -1,7 +1,7 @@
-use ::{Error, Result};
-use compiler::FunctionProto;
-use std::io::{BufRead, BufReader, Read};
+use crate::{Result};
+use crate::compiler::FunctionProto;
+use std::io::{BufReader, Read};
 
-pub fn undump<T: Read>(reader: BufReader<T>) -> Result<Box<FunctionProto>> {
+pub fn undump<T: Read>(_reader: BufReader<T>) -> Result<Box<FunctionProto>> {
     unimplemented!()
 }
