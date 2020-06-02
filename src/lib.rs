@@ -14,8 +14,6 @@ use std::io;
 use std::string;
 use std::result;
 
-const NO_JUMP: isize = -1;
-
 #[derive(Debug)]
 pub enum Error {
     IOError(io::Error),

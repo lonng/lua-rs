@@ -1,7 +1,7 @@
-use ::{Error, NO_JUMP, Result};
-use ast::*;
-use scanner::{Scanner, Token};
-use state::State;
+use crate::{Error, Result};
+use crate::ast::*;
+use crate::scanner::{Scanner, Token};
+
 use std::io::{BufReader, Read};
 use std::mem;
 
@@ -193,7 +193,7 @@ impl<R: Read> Parser<R> {
         }
         let line = self.line_number;
         // is not last statement
-        let mut stmt = match self.token {
+        let stmt = match self.token {
             Token::If => self.ifstat()?,
             Token::While => self.whilestat()?,
             Token::Do => {
@@ -268,7 +268,7 @@ impl<R: Read> Parser<R> {
             }
         }
         self.check_next(Token::Char('}'))?;
-        let mut exprnode = ExprNode::new(Expr::Table(fields), (line, self.prev_number));
+        let exprnode = ExprNode::new(Expr::Table(fields), (line, self.prev_number));
         Ok(exprnode)
     }
 
@@ -318,7 +318,7 @@ impl<R: Read> Parser<R> {
         let block = self.block()?;
         self.check_next(Token::End)?;
 
-        let mut exprnode = ExprNode::new(Expr::Function(parlist, block), (line, self.prev_number));
+        let exprnode = ExprNode::new(Expr::Function(parlist, block), (line, self.prev_number));
         Ok(exprnode)
     }
 
@@ -335,14 +335,14 @@ impl<R: Read> Parser<R> {
     /// ```
     fn prefixexp(&mut self) -> Result<ExprNode> {
         let line = self.line_number;
-        let mut expr = match self.token {
+        let expr = match self.token {
             Token::Ident(ref s) => {
                 let expr = ExprNode::new(Expr::Ident(s.clone()), (line, line));
                 expr
             }
             Token::Char('(') => {
                 self.next()?;
-                let line = self.line_number;
+                let _line = self.line_number;
                 let mut expr = self.expression()?;
                 match expr.inner_mut() {
                     Expr::FuncCall(ref mut call) => call.adj = true,
@@ -376,7 +376,7 @@ impl<R: Read> Parser<R> {
             Token::String(ref s) => {
                 let line = self.prev_number;
                 next = true;
-                let mut expr = ExprNode::new(Expr::String(s.clone()), (line, line));
+                let expr = ExprNode::new(Expr::String(s.clone()), (line, line));
                 vec![expr]
             }
             _ => return Err(Error::SyntaxError("function arguments expected".to_string()))
@@ -402,8 +402,8 @@ impl<R: Read> Parser<R> {
                     self.next()?;
                     let obj = if let Token::Ident(ref s) = self.token {
                         let line = self.line_number;
-                        let mut key = ExprNode::new(Expr::String(s.clone()), (line, line));
-                        let mut obj = Expr::AttrGet(Box::new(exprnode), Box::new(key));
+                        let key = ExprNode::new(Expr::String(s.clone()), (line, line));
+                        let obj = Expr::AttrGet(Box::new(exprnode), Box::new(key));
                         obj
                     } else {
                         return Err(self.unexpected(&self.token));
@@ -413,8 +413,8 @@ impl<R: Read> Parser<R> {
                 }
                 Token::Char('[') => {
                     self.next()?;
-                    let mut key = self.expression()?;
-                    let mut obj = Expr::AttrGet(Box::new(exprnode), Box::new(key));
+                    let key = self.expression()?;
+                    let obj = Expr::AttrGet(Box::new(exprnode), Box::new(key));
                     self.check_next(Token::Char(']'))?;
                     obj
                 }
@@ -451,7 +451,7 @@ impl<R: Read> Parser<R> {
     /// ```
     fn simple_expr(&mut self) -> Result<ExprNode> {
         let lineinfo = (self.line_number, self.line_number);
-        let mut node = match self.token {
+        let node = match self.token {
             Token::True => ExprNode::new(Expr::True, lineinfo),
             Token::False => ExprNode::new(Expr::False, lineinfo),
             Token::Nil => ExprNode::new(Expr::Nil, lineinfo),
@@ -496,9 +496,9 @@ impl<R: Read> Parser<R> {
     fn expression(&mut self) -> Result<ExprNode> { Ok(self.sub_expression(0)?.0) }
 
     fn test_then_block(&mut self) -> Result<IfThenElse> {
-        let mut jump_false = 0;
+        let _jump_false = 0;
         self.next()?;
-        let mut condition = self.expression()?;
+        let condition = self.expression()?;
         self.check_next(Token::Then)?;
         let then = self.block()?;
         Ok(IfThenElse::new(condition, then, vec![]))
@@ -512,7 +512,7 @@ impl<R: Read> Parser<R> {
         let mut elseifs: Vec<(IfThenElse, (u32, u32))> = vec![];
         while self.token == Token::Elseif {
             let line = self.line_number;
-            let mut elseif = self.test_then_block()?;
+            let elseif = self.test_then_block()?;
             elseifs.push((elseif, (line, self.prev_number)));
         }
 
@@ -523,7 +523,7 @@ impl<R: Read> Parser<R> {
         };
 
         // link all elseif
-        for mut elseif in elseifs.into_iter().rev().into_iter() {
+        for elseif in elseifs.into_iter().rev().into_iter() {
             let mut e: Vec<Node<Stmt>> = vec![];
             mem::swap(&mut e, &mut els);
             let (mut elif, lineinfo) = elseif;
@@ -561,7 +561,7 @@ impl<R: Read> Parser<R> {
         let limit = self.expression()?;
         // step optional
         let line = self.line_number;
-        let mut step = if self.testnext(&Token::Char(','))? {
+        let step = if self.testnext(&Token::Char(','))? {
             self.expression()?
         } else {
             ExprNode::new(Expr::Number(1.0), (line, self.prev_number))
@@ -607,7 +607,7 @@ impl<R: Read> Parser<R> {
             Token::Char(',') | Token::In => self.forlist(varname)?,
             _ => return Err(Error::SyntaxError("= or in expected".to_string()))
         };
-        self.check_match(Token::End, Token::For, line);
+        self.check_match(Token::End, Token::For, line)?;
         Ok(stmt)
     }
 
@@ -639,7 +639,7 @@ impl<R: Read> Parser<R> {
         while self.testnext(&Token::Char('.'))? {
             if let Token::Ident(ref s) = self.token {
                 let key = ExprNode::new(Expr::String(s.clone()), (self.prev_number, self.prev_number));
-                let mut obj = Expr::AttrGet(Box::new(nameexpr), Box::new(key));
+                let obj = Expr::AttrGet(Box::new(nameexpr), Box::new(key));
                 nameexpr = ExprNode::new(obj, (line, self.prev_number));
             } else {
                 return Err(self.unexpected(&self.token));
@@ -674,8 +674,8 @@ impl<R: Read> Parser<R> {
     }
 
     fn localfunc(&mut self) -> Result<Stmt> {
-        let line = self.line_number;
-        let mut name = if let Token::Ident(ref s) = self.token {
+        let _line = self.line_number;
+        let name = if let Token::Ident(ref s) = self.token {
             s.clone()
         } else {
             return Err(self.unexpected(&self.token));

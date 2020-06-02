@@ -1,7 +1,7 @@
 #![allow(non_snake_case)]
-#![allow(non_snake_case_globals)]
+#![allow(non_upper_case_globals)]
 
-use std::fmt::Display;
+
 
 pub const INVALID_INSTRUCTION: u32 = 0xFFFFFFFF;
 
@@ -158,7 +158,7 @@ struct OpProp {
     typ: OpType,
 }
 
-static OP_NAMES: &'static [OpProp; (OP_NOP as usize + 1)] = &[
+static OP_NAMES: &'static [OpProp; OP_NOP as usize + 1] = &[
     OpProp { name: "MOVE", is_test: false, set_reg_a: true, mode_arg_b: OpArgMode::R, mode_arg_c: OpArgMode::N, typ: OpType::ABC },
     OpProp { name: "MOVEN", is_test: false, set_reg_a: true, mode_arg_b: OpArgMode::R, mode_arg_c: OpArgMode::N, typ: OpType::ABC },
     OpProp { name: "LOADK", is_test: false, set_reg_a: true, mode_arg_b: OpArgMode::K, mode_arg_c: OpArgMode::N, typ: OpType::ABx },

@@ -1,16 +1,16 @@
 #![allow(non_snake_case)]
 
-use ::{Error, Result};
-use ast::*;
-use instruction::*;
-use std::borrow::BorrowMut;
+use crate::{Result};
+use crate::ast::*;
+use crate::instruction::*;
+
 use std::collections::HashMap;
 use std::f64;
 use std::fmt::{Debug, Error as FmtError, Formatter};
-use std::mem::{replace, swap};
+use std::mem::{swap};
 use std::rc::Rc;
 use std::result::Result as StdResult;
-use value::*;
+use crate::value::*;
 
 const MAX_REGISTERS: i32 = 200;
 const REG_UNDEFINED: usize = OPCODE_MAXA as usize;
@@ -279,9 +279,9 @@ impl Instructions {
 
 impl Debug for Instructions {
     fn fmt(&self, f: &mut Formatter) -> StdResult<(), FmtError> {
-        writeln!(f, "PC: <{}>", self.pc);
+        writeln!(f, "PC: <{}>", self.pc)?;
         for (i, inst) in self.insts.iter().enumerate() {
-            writeln!(f, "<{:04}:L{:04}> {}", i, self.lines[i], to_string(*inst));
+            writeln!(f, "<{:04}:L{:04}> {}", i, self.lines[i], to_string(*inst))?;
         }
         Ok(())
     }
@@ -659,11 +659,11 @@ impl<'p> Compiler<'p> {
     }
 
     fn load_rk(&mut self, reg: &mut usize, expr: &ExprNode, cnst: Rc<Value>) -> i32 {
-        let mut cindex = self.const_index(cnst) as i32;
+        let cindex = self.const_index(cnst) as i32;
         if cindex < opMaxIndexRk {
             rk_ask(cindex)
         } else {
-            let mut ret = *reg;
+            let ret = *reg;
             *reg += 1;
             self.code.add_ABx(OP_LOADK, ret as i32, cindex, start_line(expr));
             ret as i32
@@ -838,7 +838,7 @@ impl<'p> Compiler<'p> {
         self.code.add_ASBx(OP_JMP, 0, jumplabel, line);
     }
 
-    fn compile_binary_rel_expr(&mut self, mut reg: usize,
+    fn compile_binary_rel_expr(&mut self, reg: usize,
                                opr: BinaryOpr, lhs: &ExprNode, rhs: &ExprNode,
                                expr_ctx: &ExprContext, line: u32) {
         let a = expr_ctx.savereg(reg);
@@ -945,7 +945,7 @@ impl<'p> Compiler<'p> {
         }
     }
 
-    fn compile_binary_log_expr(&mut self, mut reg: usize,
+    fn compile_binary_log_expr(&mut self, reg: usize,
                                opr: BinaryOpr, lhs: &ExprNode, rhs: &ExprNode,
                                expr_ctx: &ExprContext, line: u32) {
         let a = expr_ctx.savereg(reg);
@@ -1006,7 +1006,7 @@ impl<'p> Compiler<'p> {
                 let mut current = rhs;
                 loop {
                     match current.inner() {
-                        Expr::BinaryOp(BinaryOpr::Concat, ref sublhs, ref subrhs) => {
+                        Expr::BinaryOp(BinaryOpr::Concat, _sublhs, ref subrhs) => {
                             crange += 1;
                             current = subrhs;
                         }
@@ -1022,7 +1022,7 @@ impl<'p> Compiler<'p> {
                     self.code.pop();
                     pc -= 1;
                 }
-                self.code.add_ABC(OP_CONCAT, a as i32, basereg as i32, (basereg as i32 + crange), start_line(expr));
+                self.code.add_ABC(OP_CONCAT, a as i32, basereg as i32, basereg as i32 + crange, start_line(expr));
             }
             Expr::BinaryOp(ref opr, ref lhs, ref rhs)
             if opr == &BinaryOpr::Eq ||
@@ -1319,7 +1319,7 @@ impl<'p> Compiler<'p> {
             let mut ac = &mut acs[namesassigned];
             let mut nilexprs: Vec<ExprNode> = vec![];
             let expr = if namesassigned >= lenexprs {
-                let mut expr = ExprNode::new(Expr::Nil, lhs[namesassigned].lineinfo());
+                let expr = ExprNode::new(Expr::Nil, lhs[namesassigned].lineinfo());
                 nilexprs.push(expr);
                 &nilexprs[0]
             } else {
@@ -1446,7 +1446,7 @@ impl<'p> Compiler<'p> {
     fn compile_local_assign_stmt(&mut self, names: &Vec<String>, values: &Vec<ExprNode>, line: u32) {
         let reg = self.reg_top();
         if names.len() == 1 && values.len() == 1 {
-            if let Expr::Function(ref params, ref stmts) = values[0].inner() {
+            if let Expr::Function(_params, _stmts) = values[0].inner() {
                 self.register_local_var(names[0].clone());
                 self.compile_reg_assignment(names, values, reg, names.len(), line);
                 return;
@@ -1567,7 +1567,7 @@ impl<'p> Compiler<'p> {
         }
     }
 
-    fn compile_if_stmt(&mut self, ifelsethen: &IfThenElse, startline: u32, endline: u32) {
+    fn compile_if_stmt(&mut self, ifelsethen: &IfThenElse, startline: u32, _endline: u32) {
         let thenlabel = self.new_label();
         let elselabel = self.new_label();
         let endlabel = self.new_label();
@@ -1657,7 +1657,7 @@ impl<'p> Compiler<'p> {
         self.set_label_pc(endlabel, lastpc);
     }
 
-    fn compile_return_stmt(&mut self, exprs: &Vec<ExprNode>, startline: u32, endline: u32) {
+    fn compile_return_stmt(&mut self, exprs: &Vec<ExprNode>, startline: u32, _endline: u32) {
         let lenexprs = exprs.len();
         let mut reg = self.reg_top();
         let a = reg;
@@ -1671,7 +1671,7 @@ impl<'p> Compiler<'p> {
                         return;
                     }
                 }
-                Expr::FuncCall(ref expr) => {
+                Expr::FuncCall(_expr) => {
                     reg += self.compile_expr(reg, &exprs[0], &ExprContext::with_opt(-2));
                     let lastpc = self.code.last_pc();
                     self.code.set_opcode(lastpc, OP_TAILCALL);
@@ -1873,7 +1873,7 @@ impl<'p> Compiler<'p> {
 
         self.code.add_ABC(OP_RETURN, 0, 1, 0, endline);
         self.end_scope();
-        let mut codestore = Instructions::new();
+        let _codestore = Instructions::new();
 
         self.proto.code = self.code.list();
         self.proto.debug_pos = self.code.line_list();
