@@ -6,7 +6,7 @@ use std::io::{BufRead, BufReader, Read};
 
 use std::u8;
 
-/// END_OF_STREAM indicates that scanner has reach the end of stream.
+/// END_OF_STREAM indicates that scanner has reached the end of stream.
 const EOF: char = 0xFF as char;
 const INIT: char = 0x0 as char;
 
@@ -254,7 +254,7 @@ impl<R: Read> Scanner<R> {
 
     fn save(&mut self, c: char) {
         self.buffer.reserve(1);
-        self.buffer.put(c as u8)
+        self.buffer.put_u8(c as u8)
     }
 
     fn save_and_advance(&mut self) {
